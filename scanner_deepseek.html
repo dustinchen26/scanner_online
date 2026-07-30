@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 掃描器 (強化自動偵測)</title>
+    <title>AI 掃描器 (預設全畫面)</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
@@ -163,7 +163,7 @@
 <body>
 
     <header>
-        <div class="logo">📷 AI 掃描器 (強化偵測)</div>
+        <div class="logo">📷 AI 掃描器 (預設全畫面)</div>
         <div id="status-badge" class="status-badge">載入中...</div>
     </header>
 
@@ -249,7 +249,10 @@
                     document.getElementById('btn-auto').disabled = false;
                     document.getElementById('btn-reset').disabled = false;
                     document.getElementById('btn-save').disabled = false;
-                    // 自動偵測一次
+
+                    // ★ 先強制設定為全畫面，確保點清楚可見
+                    resetToFull();
+                    // 再嘗試自動偵測（若成功則覆蓋，失敗則保留全畫面）
                     autoDetect();
                 };
                 img.src = ev.target.result;
@@ -273,13 +276,21 @@
             canvas.height = displayHeight;
             scaleRatio = origImage.width / displayWidth;
 
+            // 若已經有四個點，按比例調整位置，避免跑出邊界
             if (points.length === 4) {
+                // 計算舊尺寸（若無則用當前顯示尺寸）
                 const oldW = canvas.width || displayWidth;
                 const oldH = canvas.height || displayHeight;
                 if (oldW > 0 && oldH > 0) {
                     const sx = displayWidth / oldW;
                     const sy = displayHeight / oldH;
-                    points = points.map(p => ({ x: p.x * sx, y: p.y * sy }));
+                    points = points.map(p => ({
+                        x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
+                        y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
+                    }));
+                } else {
+                    // 若無舊尺寸，直接重置為全畫面
+                    resetToFull();
                 }
             }
             redraw();
@@ -365,15 +376,12 @@
                 let gray = new cv.Mat();
                 cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
 
-                // 高斯模糊去雜訊
                 let blurred = new cv.Mat();
                 cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
-                // Otsu 二值化 (自動計算最佳閾值)
                 let thresh = new cv.Mat();
                 cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
 
-                // 尋找輪廓
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -385,7 +393,6 @@
                 for (let i = 0; i < contours.size(); ++i) {
                     let cnt = contours.get(i);
                     let area = cv.contourArea(cnt);
-                    // 過濾掉面積太小 (< 1% 總面積) 或太大的 (可能整個畫面)
                     if (area < totalArea * 0.01 || area > totalArea * 0.95) {
                         cnt.delete();
                         continue;
@@ -403,7 +410,7 @@
                     cnt.delete();
                 }
 
-                if (bestApprox) {
+                if (bestApprox && maxArea > totalArea * 0.05) { // 至少佔畫面5%才視為有效
                     let detected = [];
                     for (let i = 0; i < 4; i++) {
                         detected.push({
@@ -414,7 +421,8 @@
                     points = sortPoints(detected);
                     bestApprox.delete();
                 } else {
-                    // 若偵測失敗，回到全畫面
+                    // 若偵測不到或面積太小，保持全畫面
+                    if (bestApprox) bestApprox.delete();
                     resetToFull();
                 }
 
@@ -422,7 +430,7 @@
                 contours.delete(); hierarchy.delete();
 
             } catch(err) {
-                console.warn("Auto detect error, using full view", err);
+                console.warn("Auto detect error, keeping full view", err);
                 resetToFull();
             }
             redraw();
@@ -430,12 +438,22 @@
 
         function resetToFull() {
             const margin = 20;
-            points = [
-                { x: margin, y: margin },
-                { x: displayWidth - margin, y: margin },
-                { x: displayWidth - margin, y: displayHeight - margin },
-                { x: margin, y: displayHeight - margin }
-            ];
+            if (displayWidth < 40 || displayHeight < 40) {
+                // 若畫面太小，設為0邊距
+                points = [
+                    { x: 0, y: 0 },
+                    { x: displayWidth || 100, y: 0 },
+                    { x: displayWidth || 100, y: displayHeight || 100 },
+                    { x: 0, y: displayHeight || 100 }
+                ];
+            } else {
+                points = [
+                    { x: margin, y: margin },
+                    { x: displayWidth - margin, y: margin },
+                    { x: displayWidth - margin, y: displayHeight - margin },
+                    { x: margin, y: displayHeight - margin }
+                ];
+            }
             redraw();
         }
 
@@ -511,7 +529,6 @@
 
             setTimeout(() => {
                 try {
-                    // 強制排序，保證順序正確
                     const sortedPts = sortPoints(points);
                     const origPts = sortedPts.map(p => ({
                         x: p.x * scaleRatio,
@@ -609,7 +626,7 @@
             setTimeout(() => URL.revokeObjectURL(link.href), 5000);
         }
 
-        // 初始化
+        // 初始化 (無圖片時顯示提示)
         resetToFull();
     </script>
 </body>
