@@ -167,47 +167,68 @@
 
         #output-canvas { display: none; }
 
-        /* 全螢幕遮罩（當彈窗被阻擋時備用） */
+        /* === 全螢幕遮罩（Android LINE 專用） === */
         #image-overlay {
             display: none;
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.95);
+            background: rgba(0, 0, 0, 0.95);
             z-index: 99999;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            padding: 20px 16px;
             box-sizing: border-box;
+            overflow: auto;
         }
         #image-overlay img {
             max-width: 100%;
-            max-height: 85vh;
+            max-height: 65vh;
             object-fit: contain;
             border-radius: 12px;
             box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            background: #000;
+            touch-action: none;
         }
-        #image-overlay p {
-            color: #fff;
-            font-size: 1.2rem;
+        #image-overlay .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
             margin-top: 20px;
-            text-align: center;
-            background: rgba(0,0,0,0.6);
-            padding: 12px 24px;
-            border-radius: 30px;
+            justify-content: center;
+            width: 100%;
+            max-width: 400px;
         }
-        #image-overlay .close-btn {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: #fff;
-            font-size: 2rem;
-            background: rgba(255,255,255,0.2);
+        #image-overlay .controls button {
+            flex: 1;
+            padding: 12px 20px;
+            font-size: 1rem;
+            border-radius: 30px;
             border: none;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
+            background: #107c41;
+            color: #fff;
+            font-weight: 600;
             cursor: pointer;
+            min-width: 120px;
+            touch-action: manipulation;
+        }
+        #image-overlay .controls button.close {
+            background: #555;
+        }
+        #image-overlay .controls button:active { transform: scale(0.95); }
+        #image-overlay p {
+            color: #ddd;
+            font-size: 0.95rem;
+            margin: 12px 0 0;
+            text-align: center;
+            background: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+        #image-overlay .hint {
+            color: #aaa;
+            font-size: 0.8rem;
+            margin-top: 8px;
         }
 
         @media (max-width: 480px) {
@@ -221,7 +242,8 @@
             .control-group { gap: 3px; }
             .status-badge { font-size: 0.6rem; padding: 2px 8px; }
             #line-warning { font-size: 0.75rem; padding: 6px 10px; }
-            #image-overlay p { font-size: 0.9rem; padding: 8px 16px; }
+            #image-overlay img { max-height: 55vh; }
+            #image-overlay .controls button { font-size: 0.9rem; padding: 10px 14px; }
         }
         @media (min-width: 769px) {
             .btn { padding: 7px 16px; font-size: 0.9rem; min-height: 38px; }
@@ -239,8 +261,8 @@
 
     <!-- LINE 警告 -->
     <div id="line-warning">
-        ⚠️ 偵測到 LINE 內建瀏覽器，<strong>可能無法直接下載</strong>。
-        系統將改為「<strong>新分頁顯示圖片</strong>」，請長按圖片儲存。
+        ⚠️ 偵測到 Android LINE 瀏覽器，<strong>無法直接下載</strong>。
+        系統將在「<strong>本頁面</strong>」顯示圖片，請使用「<strong>分享</strong>」或「<strong>截圖</strong>」儲存。
         <span style="display:inline-block;margin-left:6px;font-size:1.2rem;">📱</span>
     </div>
 
@@ -281,11 +303,15 @@
 
     <canvas id="output-canvas"></canvas>
 
-    <!-- 全螢幕圖片遮罩（備用） -->
+    <!-- ========== 全螢幕遮罩（Android LINE 專用） ========== -->
     <div id="image-overlay">
-        <button class="close-btn" onclick="document.getElementById('image-overlay').style.display='none'">✕</button>
-        <img id="overlay-img" src="" alt="掃描結果">
-        <p>📸 請長按圖片 → 「儲存影像」或「分享」</p>
+        <img id="overlay-img" src="" alt="掃描結果" />
+        <div class="controls">
+            <button id="share-btn" onclick="shareOverlayImage()">📤 分享圖片</button>
+            <button class="close" onclick="closeOverlay()">✕ 關閉</button>
+        </div>
+        <p>📸 點「分享」可儲存至相簿；若無效，請 <b>截圖</b> 儲存</p>
+        <p class="hint">💡 建議使用 Chrome / Samsung 瀏覽器開啟以獲得完整下載功能</p>
     </div>
 
     <script>
@@ -309,6 +335,7 @@
         const lineWarning = document.getElementById('line-warning');
 
         const MAX_IMAGE_SIZE = 2000;
+        let lastProcessedDataURL = null; // 儲存最新產生的圖片 dataURL
 
         // ============================================================
         //  偵測瀏覽器環境
@@ -317,8 +344,6 @@
             const ua = navigator.userAgent || '';
             const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
             const isAndroid = /Android/i.test(ua);
-            const isIOS = /iPhone|iPad|iPod/i.test(ua);
-            // 特別標記：Android LINE 是下載最困難的環境
             const isAndroidLine = isAndroid && isLine;
             if (isLine) {
                 lineWarning.style.display = 'block';
@@ -326,11 +351,9 @@
                     statusBadge.textContent = '⚠️ Android LINE';
                     statusBadge.style.backgroundColor = '#6b2a1a';
                     statusBadge.style.color = '#ff9966';
-                    // 修改警告文字
                     lineWarning.innerHTML = `
                         ⚠️ 偵測到 Android LINE 瀏覽器，<strong>無法直接下載</strong>。
-                        點擊「儲存」後，將開啟「<strong>新分頁顯示圖片</strong>」，
-                        請 <strong>長按圖片</strong> 選擇「儲存影像」或「分享」。
+                        系統將在「<strong>本頁面</strong>」顯示圖片，請使用「<strong>分享</strong>」或「<strong>截圖</strong>」儲存。
                         <span style="display:inline-block;margin-left:6px;font-size:1.2rem;">📱</span>
                     `;
                 } else {
@@ -339,7 +362,7 @@
                     statusBadge.style.color = '#ff9966';
                 }
             }
-            return { isLine, isAndroid, isIOS, isAndroidLine };
+            return { isLine, isAndroid, isAndroidLine };
         }
         const browserInfo = detectBrowser();
         const isAndroidLine = browserInfo.isAndroidLine;
@@ -354,7 +377,7 @@
                     statusBadge.textContent = '系統就緒';
                     statusBadge.classList.add('ready');
                 } else if (isAndroidLine) {
-                    statusBadge.textContent = '⚠️ 將用新分頁顯示';
+                    statusBadge.textContent = '⚠️ 將顯示於本頁';
                 } else {
                     statusBadge.textContent = '⚠️ 請用瀏覽器開啟';
                 }
@@ -676,44 +699,51 @@
         }
 
         // ============================================================
-        //  ★★★ 最終王牌：新分頁顯示圖片（供長按儲存） ★★★
+        //  ★★★ 全螢幕遮罩顯示（Android LINE 專用） ★★★
         // ============================================================
-        function showImageInNewTab(dataUrl) {
-            // 方法 A：嘗試開啟新視窗
-            let win = window.open('', '_blank');
-            if (win && !win.closed) {
-                win.document.write(`
-                    <!DOCTYPE html>
-                    <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>掃描結果 - 長按儲存</title>
-                    <style>
-                        body { margin:0; padding:0; background:#1a1a1a; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; }
-                        img { max-width:100%; max-height:90vh; object-fit:contain; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.8); }
-                        p { color:#ccc; font-family:sans-serif; font-size:1.1rem; margin:16px; text-align:center; background:rgba(0,0,0,0.5); padding:10px 20px; border-radius:30px; }
-                        .hint { color:#aaa; font-size:0.9rem; }
-                    </style>
-                    </head>
-                    <body>
-                        <img src="${dataUrl}" alt="掃描結果" />
-                        <p>📸 請 <b>長按圖片</b> → 選擇「<b>儲存影像</b>」或「<b>分享</b>」</p>
-                        <p class="hint">✨ 若無法儲存，請點右上角「⋯」→「以瀏覽器開啟」後再試</p>
-                    </body></html>
-                `);
-                win.document.close();
-                return true;
-            }
-
-            // 方法 B：若彈窗被阻擋，使用全螢幕遮罩
-            console.warn('新視窗被阻擋，改用全螢幕遮罩');
+        function showImageOverlay(dataUrl) {
+            lastProcessedDataURL = dataUrl;
             const overlay = document.getElementById('image-overlay');
-            const overlayImg = document.getElementById('overlay-img');
-            overlayImg.src = dataUrl;
+            const img = document.getElementById('overlay-img');
+            img.src = dataUrl;
             overlay.style.display = 'flex';
-            return false;
+        }
+
+        function closeOverlay() {
+            document.getElementById('image-overlay').style.display = 'none';
+        }
+
+        // 分享按鈕的處理
+        function shareOverlayImage() {
+            if (!lastProcessedDataURL) {
+                alert('請先產生圖片');
+                return;
+            }
+            // 將 dataURL 轉為 Blob
+            fetch(lastProcessedDataURL)
+                .then(res => res.blob())
+                .then(blob => {
+                    const file = new File([blob], 'scanned_image.png', { type: 'image/png' });
+                    if (navigator.share && navigator.canShare) {
+                        navigator.share({
+                            files: [file],
+                            title: '掃描結果'
+                        }).catch(err => {
+                            if (err.name !== 'AbortError') {
+                                alert('分享失敗，請使用截圖儲存。');
+                            }
+                        });
+                    } else {
+                        alert('您的瀏覽器不支援分享功能，請使用截圖儲存。');
+                    }
+                })
+                .catch(() => {
+                    alert('無法處理圖片，請使用截圖儲存。');
+                });
         }
 
         // ============================================================
-        //  ★★★ 儲存邏輯（針對 Android LINE 直接跳轉新分頁） ★★★
+        //  ★★★ 儲存邏輯（Android LINE 強制使用遮罩） ★★★
         // ============================================================
         function processAndSave() {
             if (!origImage || points.length !== 4) {
@@ -721,9 +751,8 @@
                 return;
             }
 
-            // 若為 Android LINE，直接使用新分頁顯示，跳過所有下載嘗試
+            // 若為 Android LINE，直接使用遮罩，不做任何下載嘗試
             if (isAndroidLine) {
-                // 先處理圖片產生 dataURL
                 const saveBtn = document.getElementById('btn-save');
                 saveBtn.disabled = true;
                 saveBtn.innerHTML = '<span class="spinner"></span> 準備中…';
@@ -785,12 +814,12 @@
 
                         srcTri.delete(); dstTri.delete(); M.delete();
 
-                        // 轉為 dataURL（PNG 不失真）
+                        // 轉為 dataURL（PNG）
                         const dataUrl = outCanvas.toDataURL('image/png');
                         finalMat.delete();
 
-                        // 顯示在新分頁
-                        showImageInNewTab(dataUrl);
+                        // 顯示遮罩
+                        showImageOverlay(dataUrl);
 
                         saveBtn.disabled = false;
                         saveBtn.innerHTML = '✅ 儲存';
@@ -885,9 +914,9 @@
 
                     outCanvas.toBlob(function(blob) {
                         if (!blob) {
-                            // 若 blob 失敗，改用 dataURL 新分頁
+                            // 若 blob 失敗，改為遮罩顯示
                             const dataUrl = outCanvas.toDataURL('image/png');
-                            showImageInNewTab(dataUrl);
+                            showImageOverlay(dataUrl);
                             finalMat.delete();
                             saveBtn.disabled = false;
                             saveBtn.innerHTML = '✅ 儲存';
@@ -909,9 +938,9 @@
                                     })
                                     .catch((err) => {
                                         if (err.name !== 'AbortError') {
-                                            // 分享失敗，轉為新分頁顯示
+                                            // 分享失敗，轉為遮罩顯示
                                             const dataUrl = outCanvas.toDataURL('image/png');
-                                            showImageInNewTab(dataUrl);
+                                            showImageOverlay(dataUrl);
                                         }
                                         saveBtn.disabled = false;
                                         saveBtn.innerHTML = '✅ 儲存';
@@ -938,9 +967,9 @@
                             console.warn('Download failed', e);
                         }
 
-                        // 3. 最終王牌：新分頁顯示
+                        // 3. 最終王牌：遮罩顯示
                         const dataUrl = outCanvas.toDataURL('image/png');
-                        showImageInNewTab(dataUrl);
+                        showImageOverlay(dataUrl);
                         saveBtn.disabled = false;
                         saveBtn.innerHTML = '✅ 儲存';
                         finalMat.delete();
@@ -971,6 +1000,8 @@
         window.resetToFull = resetToFull;
         window.redraw = redraw;
         window.processAndSave = processAndSave;
+        window.shareOverlayImage = shareOverlayImage;
+        window.closeOverlay = closeOverlay;
     </script>
 </body>
 </html>
