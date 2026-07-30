@@ -468,115 +468,36 @@
             }
 
             // ============================================================
-            //  EXIF 方向解析（升級版）
-            // ============================================================
-            function getExifOrientation(arrayBuffer) {
-                try {
-                    const view = new DataView(arrayBuffer);
-                    if (view.byteLength < 2) return 1;
-                    if (view.getUint16(0, false) !== 0xFFD8) return 1; // 非 JPEG
-
-                    let offset = 2;
-                    while (offset < view.byteLength) {
-                        const marker = view.getUint16(offset, false);
-                        offset += 2;
-                        if (marker === 0xFFE1) { // APP1
-                            const length = view.getUint16(offset, false);
-                            const exifStart = offset + 2;
-                            if (exifStart + 6 > view.byteLength) return 1;
-                            // 檢查 "Exif" 標頭
-                            if (view.getUint32(exifStart, false) === 0x45786966) {
-                                const tiffStart = exifStart + 6;
-                                if (tiffStart + 4 > view.byteLength) return 1;
-                                // 讀取字節序
-                                const byteOrder = view.getUint16(tiffStart, false);
-                                const isLittle = (byteOrder === 0x4949);
-                                // 讀取第一個 IFD 偏移
-                                const ifdOffset = view.getUint32(tiffStart + 4, isLittle);
-                                const entryStart = tiffStart + ifdOffset;
-                                if (entryStart + 2 > view.byteLength) return 1;
-                                const entryCount = view.getUint16(entryStart, isLittle);
-                                for (let i = 0; i < entryCount; i++) {
-                                    const entry = entryStart + 2 + i * 12;
-                                    if (entry + 12 > view.byteLength) break;
-                                    const tag = view.getUint16(entry, isLittle);
-                                    if (tag === 0x0112) { // Orientation
-                                        const value = view.getUint16(entry + 8, isLittle);
-                                        return value;
-                                    }
-                                }
-                            }
-                            offset += length;
-                        } else if (marker >= 0xFFE0 && marker <= 0xFFEF) {
-                            // 其他 APP 段，跳過
-                            const length = view.getUint16(offset, false);
-                            offset += length;
-                        } else {
-                            break;
-                        }
-                    }
-                    return 1;
-                } catch (e) {
-                    console.warn('EXIF parsing error:', e);
-                    return 1;
-                }
-            }
-
-            // ============================================================
-            //  處理圖片（包含 EXIF 方向修正）
+            //  處理圖片（修正：捨棄手動 EXIF，改用 iOS/瀏覽器原生渲染）
             // ============================================================
             function processImageFile(file) {
+                if (!cvReady || typeof cv === 'undefined') {
+                    pendingImageFile = file;
+                    alert('OpenCV 載入中，請稍後再試。若仍未就緒，請檢查網路或重新整理。');
+                    return;
+                }
                 const reader = new FileReader();
                 reader.onload = function(ev) {
-                    const arrayBuffer = ev.target.result;
-                    let orientation = getExifOrientation(arrayBuffer);
-                    // 若無法讀取（如 HEIC 格式），orientation 可能為 1，但實際需旋轉。
-                    // 但瀏覽器通常會將 HEIC 轉為 JPEG，所以應有 EXIF。
-                    // 若仍為 1，則我們可以嘗試根據圖片寬高推測是否需旋轉（不精確，但可作為備用）
-                    // 但我們先不猜測，因為會誤判。
-                    const blob = new Blob([arrayBuffer], { type: file.type });
-                    const url = URL.createObjectURL(blob);
+                    const dataUrl = ev.target.result;
                     const img = new Image();
                     img.onload = function() {
-                        URL.revokeObjectURL(url);
-                        // 繪製到 canvas 並套用方向修正
-                        const canvasRotate = document.createElement('canvas');
-                        const ctxRotate = canvasRotate.getContext('2d');
+                        // 瀏覽器原生已套用 EXIF 旋轉，圖片自然是正的
                         let w = img.width, h = img.height;
-                        let finalW = w, finalH = h;
-                        let transform = null;
-                        switch (orientation) {
-                            case 2: transform = (ctx, w, h) => { ctx.scale(-1, 1); ctx.drawImage(img, -w, 0); }; break;
-                            case 3: transform = (ctx, w, h) => { ctx.rotate(Math.PI); ctx.drawImage(img, -w, -h); }; break;
-                            case 4: transform = (ctx, w, h) => { ctx.scale(1, -1); ctx.drawImage(img, 0, -h); }; break;
-                            case 5: transform = (ctx, w, h) => { ctx.rotate(0.5 * Math.PI); ctx.scale(1, -1); ctx.drawImage(img, 0, -w); }; finalW = h; finalH = w; break;
-                            case 6: transform = (ctx, w, h) => { ctx.rotate(0.5 * Math.PI); ctx.drawImage(img, 0, -w); }; finalW = h; finalH = w; break;
-                            case 7: transform = (ctx, w, h) => { ctx.rotate(-0.5 * Math.PI); ctx.scale(-1, 1); ctx.drawImage(img, -h, 0); }; finalW = h; finalH = w; break;
-                            case 8: transform = (ctx, w, h) => { ctx.rotate(-0.5 * Math.PI); ctx.drawImage(img, -h, 0); }; finalW = h; finalH = w; break;
-                            default: break;
-                        }
-                        canvasRotate.width = finalW;
-                        canvasRotate.height = finalH;
-                        if (transform) {
-                            ctxRotate.save();
-                            transform(ctxRotate, w, h);
-                            ctxRotate.restore();
-                        } else {
-                            ctxRotate.drawImage(img, 0, 0);
-                        }
-                        // 縮小尺寸
                         let scale = 1;
-                        if (finalW > MAX_IMAGE_SIZE || finalH > MAX_IMAGE_SIZE) {
-                            scale = Math.min(MAX_IMAGE_SIZE / finalW, MAX_IMAGE_SIZE / finalH);
+                        if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
+                            scale = Math.min(MAX_IMAGE_SIZE / w, MAX_IMAGE_SIZE / h);
                         }
-                        const newW = Math.round(finalW * scale);
-                        const newH = Math.round(finalH * scale);
+                        const newW = Math.round(w * scale);
+                        const newH = Math.round(h * scale);
+
+                        // 載入並縮放至記憶體 Canvas
                         const tempCanvas = document.createElement('canvas');
                         tempCanvas.width = newW;
                         tempCanvas.height = newH;
                         const tempCtx = tempCanvas.getContext('2d');
-                        tempCtx.drawImage(canvasRotate, 0, 0, newW, newH);
+                        tempCtx.drawImage(img, 0, 0, newW, newH);
 
+                        // 轉換為可讓 OpenCV 讀取的 Image 物件
                         const scaledImg = new Image();
                         scaledImg.onload = function() {
                             origImage = scaledImg;
@@ -594,9 +515,6 @@
                                     alert('圖片格式不支援，請嘗試其他圖片');
                                     return;
                                 }
-                            } else {
-                                alert('OpenCV 尚未載入完成，請稍候再試');
-                                return;
                             }
                             fitCanvasToWindow(true);
                             placeholder.style.display = 'none';
@@ -608,9 +526,9 @@
                         };
                         scaledImg.src = tempCanvas.toDataURL('image/png');
                     };
-                    img.src = url;
+                    img.src = dataUrl;
                 };
-                reader.readAsArrayBuffer(file);
+                reader.readAsDataURL(file);
             }
 
             // ============================================================
