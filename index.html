@@ -4,9 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>AI 掃描器 (by Dustin)</title>
-    <!-- 引入 EXIF 庫以解決旋轉問題 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
-    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+    <!-- 先定義 onOpenCvReady 為全域函數 -->
+    <script>
+        window.onOpenCvReady = function() {
+            console.log('OpenCV script loaded, waiting for runtime...');
+            if (typeof cv !== 'undefined') {
+                cv.onRuntimeInitialized = function() {
+                    console.log('OpenCV runtime initialized');
+                    window.cvReady = true;
+                    document.getElementById('status-badge').textContent = '系統就緒';
+                    document.getElementById('status-badge').className = 'status-badge ready';
+                    if (window.pendingImageData) {
+                        processPendingImage(window.pendingImageData);
+                    }
+                };
+            } else {
+                console.warn('OpenCV not defined after load');
+                document.getElementById('status-badge').textContent = '⚠️ OpenCV 載入失敗';
+            }
+        };
+        if (typeof cv !== 'undefined' && !window.cvReady) {
+            window.onOpenCvReady();
+        }
+    </script>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvReady();" onerror="console.error('OpenCV load failed');"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
         html, body { height: 100%; height: 100dvh; overflow: hidden; background-color: #121212; color: #e0e0e0; }
@@ -270,6 +291,7 @@
     </style>
 </head>
 <body>
+    <!-- LINE 警告（僅 Android LINE 顯示） -->
     <div id="line-warning">
         <span id="warning-text">⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。</span>
         <span class="switch-mode" onclick="toggleForceMode()">🔄 切換模式</span>
@@ -324,559 +346,628 @@
 
     <script>
         // ============================================================
-        //  核心變數
+        //  核心變數（全部包在立即函式中）
         // ============================================================
-        let cvReady = false;
-        let origImage = null;
-        let imgMat = null;
-        let displayWidth = 0;
-        let displayHeight = 0;
-        let scaleRatio = 1.0;
-        let points = [];
-        let selectedIdx = -1;
-        let isDragging = false;
-        let isResizing = false;
-        let resizeTimeout = null;
+        (function() {
+            let cvReady = false;
+            let origImage = null;
+            let imgMat = null;
+            let displayWidth = 0;
+            let displayHeight = 0;
+            let scaleRatio = 1.0;
+            let points = [];
+            let selectedIdx = -1;
+            let isDragging = false;
+            let resizeTimeout = null;
+            let isResizing = false;
+            let lastDisplayWidth = 0;
+            let lastDisplayHeight = 0;
 
-        const canvas = document.getElementById('main-canvas');
-        const ctx = canvas.getContext('2d');
-        const placeholder = document.getElementById('placeholder');
-        const statusBadge = document.getElementById('status-badge');
-        const lineWarning = document.getElementById('line-warning');
-        const warningText = document.getElementById('warning-text');
+            const canvas = document.getElementById('main-canvas');
+            const ctx = canvas.getContext('2d');
+            const placeholder = document.getElementById('placeholder');
+            const statusBadge = document.getElementById('status-badge');
+            const lineWarning = document.getElementById('line-warning');
+            const warningText = document.getElementById('warning-text');
 
-        const MAX_IMAGE_SIZE = 2000;
-        let lastProcessedDataURL = null;
-        let forceAndroidLineMode = false;
+            const MAX_IMAGE_SIZE = 2000;
+            let lastProcessedDataURL = null;
+            let forceAndroidLineMode = false;
+            let pendingImageFile = null;
 
-        // ============================================================
-        //  裝置偵測（僅 Android LINE 顯示警告）
-        // ============================================================
-        function detectBrowser() {
-            const ua = navigator.userAgent;
-            const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua));
-            const isAndroid = /Android/.test(ua) && !/Windows/.test(ua);
-            const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
-            const isIPhone = (/iPhone/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua))) && !isIPadDesktop;
-            const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
-            const isAndroidLine = isAndroid && isLine;
+            // ============================================================
+            //  裝置偵測
+            // ============================================================
+            function detectBrowser() {
+                const ua = navigator.userAgent;
+                const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua));
+                const isAndroid = /Android/.test(ua) && !/Windows/.test(ua);
+                const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
+                const isIPhone = (/iPhone/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua))) && !isIPadDesktop;
+                const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
+                const isAndroidLine = isAndroid && isLine;
 
-            if (isAndroidLine) {
-                lineWarning.style.display = 'block';
-                warningText.textContent = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
-                statusBadge.textContent = '⚠️ Android LINE';
-                statusBadge.className = 'status-badge android-line';
-            } else {
-                lineWarning.style.display = 'none';
-                if (cvReady) {
-                    statusBadge.textContent = '系統就緒';
-                    statusBadge.className = 'status-badge ready';
+                if (isAndroidLine) {
+                    lineWarning.style.display = 'block';
+                    warningText.textContent = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
+                    statusBadge.textContent = '⚠️ Android LINE';
+                    statusBadge.className = 'status-badge android-line';
                 } else {
-                    statusBadge.textContent = '載入中…';
-                    statusBadge.className = 'status-badge';
-                }
-            }
-            return { isAndroidLine, isIPhone, isLine };
-        }
-
-        function toggleForceMode() {
-            forceAndroidLineMode = !forceAndroidLineMode;
-            const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
-            alert(msg);
-            const info = detectBrowser();
-            if (forceAndroidLineMode) {
-                lineWarning.style.display = 'block';
-                warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
-                statusBadge.textContent = '🔧 遮罩強制';
-                statusBadge.className = 'status-badge android-line';
-            } else {
-                if (!info.isAndroidLine) {
                     lineWarning.style.display = 'none';
                     if (cvReady) {
                         statusBadge.textContent = '系統就緒';
                         statusBadge.className = 'status-badge ready';
-                    }
-                }
-            }
-        }
-
-        let browserInfo = detectBrowser();
-
-        function useAndroidLineMode() {
-            return forceAndroidLineMode || browserInfo.isAndroidLine;
-        }
-
-        // ============================================================
-        //  OpenCV 初始化
-        // ============================================================
-        function onOpenCvReady() {
-            cv.onRuntimeInitialized = () => {
-                cvReady = true;
-                browserInfo = detectBrowser();
-                if (!browserInfo.isAndroidLine && !forceAndroidLineMode) {
-                    statusBadge.textContent = '系統就緒';
-                    statusBadge.className = 'status-badge ready';
-                }
-            };
-        }
-
-        // ============================================================
-        //  EXIF 旋轉輔助函數
-        // ============================================================
-        function getOrientation(file, callback) {
-            EXIF.getData(file, function() {
-                let orientation = EXIF.getTag(this, 'Orientation') || 1;
-                callback(orientation);
-            });
-        }
-
-        // 將圖片依照 Orientation 旋轉並繪製到 canvas，回傳 dataURL
-        function rotateImageByOrientation(img, orientation) {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            let w = img.width, h = img.height;
-            let rot = 0, scaleX = 1, scaleY = 1;
-            switch (orientation) {
-                case 2: scaleX = -1; break;
-                case 3: rot = 180; break;
-                case 4: scaleY = -1; break;
-                case 5: rot = 90; scaleX = -1; break;
-                case 6: rot = 90; break;
-                case 7: rot = -90; scaleX = -1; break;
-                case 8: rot = -90; break;
-                default: break;
-            }
-            if (rot === 90 || rot === -90) {
-                [w, h] = [h, w];
-            }
-            canvas.width = w;
-            canvas.height = h;
-            ctx.translate(w/2, h/2);
-            ctx.rotate(rot * Math.PI/180);
-            if (scaleX === -1) ctx.scale(-1, 1);
-            if (scaleY === -1) ctx.scale(1, -1);
-            ctx.drawImage(img, -img.width/2, -img.height/2);
-            return canvas.toDataURL('image/png');
-        }
-
-        // ============================================================
-        //  檔案載入（修正 EXIF 旋轉 + 縮圖）
-        // ============================================================
-        function handleFileSelect(e) {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = function(ev) {
-                const img = new Image();
-                img.onload = function() {
-                    // 讀取 EXIF 旋轉資訊
-                    getOrientation(file, function(orientation) {
-                        let finalSrc = img;
-                        let finalW = img.width, finalH = img.height;
-                        // 若需旋轉，產生旋轉後的圖片
-                        if (orientation && orientation !== 1) {
-                            const dataUrl = rotateImageByOrientation(img, orientation);
-                            const rotatedImg = new Image();
-                            rotatedImg.onload = function() {
-                                // 旋轉後再縮圖
-                                processScaledImage(rotatedImg);
-                            };
-                            rotatedImg.src = dataUrl;
-                        } else {
-                            // 不需旋轉直接處理
-                            processScaledImage(img);
-                        }
-                    });
-                };
-                img.src = ev.target.result;
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function processScaledImage(img) {
-            let w = img.width, h = img.height;
-            let scale = 1;
-            if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
-                scale = Math.min(MAX_IMAGE_SIZE / w, MAX_IMAGE_SIZE / h);
-            }
-            const newW = Math.round(w * scale);
-            const newH = Math.round(h * scale);
-
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = newW;
-            tempCanvas.height = newH;
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(img, 0, 0, newW, newH);
-
-            const scaledImg = new Image();
-            scaledImg.onload = function() {
-                origImage = scaledImg;
-                if (imgMat) imgMat.delete();
-                if (cvReady) {
-                    const tempCanvas2 = document.createElement('canvas');
-                    tempCanvas2.width = newW;
-                    tempCanvas2.height = newH;
-                    const ctx2 = tempCanvas2.getContext('2d');
-                    ctx2.drawImage(scaledImg, 0, 0);
-                    imgMat = cv.imread(tempCanvas2);
-                }
-                // 強制重新計算顯示尺寸（先重置點，避免舊座標干擾）
-                points = [];
-                fitCanvasToWindow(true);
-                placeholder.style.display = 'none';
-                document.getElementById('btn-auto').disabled = false;
-                document.getElementById('btn-reset').disabled = false;
-                document.getElementById('btn-save').disabled = false;
-                resetToFull();
-                autoDetect();
-            };
-            scaledImg.src = tempCanvas.toDataURL('image/png');
-        }
-
-        // ============================================================
-        //  自適應畫布（穩定版，防止無限循環）
-        // ============================================================
-        function fitCanvasToWindow(force = false) {
-            if (!origImage) return;
-            if (isResizing && !force) return;
-            isResizing = true;
-
-            try {
-                const container = document.getElementById('canvas-container');
-                const rect = container.getBoundingClientRect();
-                let maxW = rect.width - 4;
-                let maxH = rect.height - 4;
-
-                if (maxW < 10 || maxH < 10 || !isFinite(maxW) || !isFinite(maxH)) {
-                    maxW = Math.max(200, window.innerWidth * 0.8);
-                    maxH = Math.max(200, window.innerHeight * 0.6);
-                }
-
-                let w = origImage.width, h = origImage.height;
-                const scale = Math.min(maxW / w, maxH / h);
-                const newW = Math.round(w * scale);
-                const newH = Math.round(h * scale);
-
-                if (displayWidth !== newW || displayHeight !== newH) {
-                    displayWidth = newW;
-                    displayHeight = newH;
-                    canvas.width = displayWidth;
-                    canvas.height = displayHeight;
-                    canvas.style.width = displayWidth + 'px';
-                    canvas.style.height = displayHeight + 'px';
-                    scaleRatio = origImage.width / displayWidth;
-
-                    // 若有舊點，按比例調整，避免超出邊界
-                    if (points.length === 4) {
-                        const oldW = canvas.width || displayWidth;
-                        const oldH = canvas.height || displayHeight;
-                        if (oldW > 0 && oldH > 0) {
-                            const sx = displayWidth / oldW;
-                            const sy = displayHeight / oldH;
-                            points = points.map(p => ({
-                                x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
-                                y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
-                            }));
-                        } else {
-                            resetToFull();
-                        }
-                    }
-                    redraw();
-                }
-            } finally {
-                isResizing = false;
-            }
-        }
-
-        // 監聽容器尺寸變化（防抖）
-        const ro = new ResizeObserver(() => {
-            if (origImage) {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(() => {
-                    if (!isResizing) {
-                        fitCanvasToWindow(true);
-                    }
-                }, 100);
-            }
-        });
-        ro.observe(document.getElementById('canvas-container'));
-
-        window.addEventListener('resize', () => {
-            if (origImage) {
-                clearTimeout(resizeTimeout);
-                resizeTimeout = setTimeout(() => {
-                    if (!isResizing) {
-                        fitCanvasToWindow(true);
-                    }
-                }, 100);
-            }
-        });
-
-        // ============================================================
-        //  拖曳控制
-        // ============================================================
-        function getCanvasCoords(e) {
-            const rect = canvas.getBoundingClientRect();
-            const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
-            const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            return {
-                x: (clientX - rect.left) * scaleX,
-                y: (clientY - rect.top) * scaleY
-            };
-        }
-
-        function handleStart(e) {
-            if (!points.length) return;
-            e.preventDefault();
-            const pos = getCanvasCoords(e);
-            const threshold = 30;
-            for (let i = 0; i < points.length; i++) {
-                const dx = pos.x - points[i].x;
-                const dy = pos.y - points[i].y;
-                if (dx*dx + dy*dy < threshold*threshold) {
-                    selectedIdx = i;
-                    isDragging = true;
-                    break;
-                }
-            }
-        }
-
-        function handleMove(e) {
-            if (!isDragging || selectedIdx < 0) return;
-            e.preventDefault();
-            const pos = getCanvasCoords(e);
-            const x = Math.max(2, Math.min(displayWidth - 2, pos.x));
-            const y = Math.max(2, Math.min(displayHeight - 2, pos.y));
-            points[selectedIdx] = { x, y };
-            redraw();
-        }
-
-        function handleEnd(e) {
-            if (isDragging) {
-                isDragging = false;
-                selectedIdx = -1;
-            }
-        }
-
-        canvas.addEventListener('mousedown', handleStart);
-        window.addEventListener('mousemove', (e) => { if (isDragging) handleMove(e); });
-        window.addEventListener('mouseup', handleEnd);
-        canvas.addEventListener('touchstart', handleStart, { passive: false });
-        window.addEventListener('touchmove', (e) => { if (isDragging) handleMove(e); }, { passive: false });
-        window.addEventListener('touchend', handleEnd);
-
-        function sortPoints(pts) {
-            let sums = pts.map(p => p.x + p.y);
-            let diffs = pts.map(p => p.y - p.x);
-            let topLeft = pts[sums.indexOf(Math.min(...sums))];
-            let bottomRight = pts[sums.indexOf(Math.max(...sums))];
-            let topRight = pts[diffs.indexOf(Math.min(...diffs))];
-            let bottomLeft = pts[diffs.indexOf(Math.max(...diffs))];
-            return [topLeft, topRight, bottomRight, bottomLeft];
-        }
-
-        // ============================================================
-        //  自動偵測
-        // ============================================================
-        function autoDetect() {
-            if (!cvReady || !imgMat) { resetToFull(); return; }
-            try {
-                let gray = new cv.Mat();
-                cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
-                let blurred = new cv.Mat();
-                cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
-                let thresh = new cv.Mat();
-                cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-                let contours = new cv.MatVector();
-                let hierarchy = new cv.Mat();
-                cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-                let totalArea = imgMat.rows * imgMat.cols;
-                let maxArea = 0;
-                let bestApprox = null;
-
-                for (let i = 0; i < contours.size(); ++i) {
-                    let cnt = contours.get(i);
-                    let area = cv.contourArea(cnt);
-                    if (area < totalArea * 0.01 || area > totalArea * 0.95) {
-                        cnt.delete();
-                        continue;
-                    }
-                    let peri = cv.arcLength(cnt, true);
-                    let approx = new cv.Mat();
-                    cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
-                    if (approx.rows === 4 && area > maxArea) {
-                        maxArea = area;
-                        if (bestApprox) bestApprox.delete();
-                        bestApprox = approx;
                     } else {
-                        approx.delete();
+                        statusBadge.textContent = '載入中…';
+                        statusBadge.className = 'status-badge';
                     }
-                    cnt.delete();
                 }
+                return { isAndroidLine, isIPhone, isLine };
+            }
 
-                if (bestApprox && maxArea > totalArea * 0.05) {
-                    let detected = [];
-                    for (let i = 0; i < 4; i++) {
-                        detected.push({
-                            x: bestApprox.data32S[i*2] / scaleRatio,
-                            y: bestApprox.data32S[i*2+1] / scaleRatio
-                        });
-                    }
-                    points = sortPoints(detected);
-                    bestApprox.delete();
+            function toggleForceMode() {
+                forceAndroidLineMode = !forceAndroidLineMode;
+                const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
+                alert(msg);
+                const info = detectBrowser();
+                if (forceAndroidLineMode) {
+                    lineWarning.style.display = 'block';
+                    warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
+                    statusBadge.textContent = '🔧 遮罩強制';
+                    statusBadge.className = 'status-badge android-line';
                 } else {
-                    if (bestApprox) bestApprox.delete();
+                    if (!info.isAndroidLine) {
+                        lineWarning.style.display = 'none';
+                        if (cvReady) {
+                            statusBadge.textContent = '系統就緒';
+                            statusBadge.className = 'status-badge ready';
+                        }
+                    }
+                }
+            }
+
+            let browserInfo = detectBrowser();
+
+            function useAndroidLineMode() {
+                return forceAndroidLineMode || browserInfo.isAndroidLine;
+            }
+
+            // ============================================================
+            //  OpenCV 狀態同步
+            // ============================================================
+            Object.defineProperty(window, 'cvReady', {
+                set: function(val) {
+                    cvReady = val;
+                    if (val) {
+                        browserInfo = detectBrowser();
+                        if (pendingImageFile) {
+                            processImageFile(pendingImageFile);
+                            pendingImageFile = null;
+                        }
+                        document.getElementById('btn-auto').disabled = false;
+                        document.getElementById('btn-reset').disabled = false;
+                        document.getElementById('btn-save').disabled = false;
+                    }
+                },
+                get: function() { return cvReady; }
+            });
+
+            const originalOnReady = window.onOpenCvReady;
+            window.onOpenCvReady = function() {
+                if (typeof originalOnReady === 'function') originalOnReady();
+                if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
+                    cv.onRuntimeInitialized = function() {
+                        window.cvReady = true;
+                        console.log('OpenCV ready');
+                    };
+                }
+            };
+            if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
+                cv.onRuntimeInitialized = function() {
+                    window.cvReady = true;
+                    console.log('OpenCV ready (immediate)');
+                };
+            }
+
+            // ============================================================
+            //  EXIF 方向解析
+            // ============================================================
+            function getExifOrientation(arrayBuffer) {
+                try {
+                    const view = new DataView(arrayBuffer);
+                    if (view.byteLength < 2) return 1;
+                    if (view.getUint16(0, false) !== 0xFFD8) return 1;
+                    let offset = 2;
+                    while (offset < view.byteLength) {
+                        const marker = view.getUint16(offset, false);
+                        offset += 2;
+                        if (marker === 0xFFE1) {
+                            const length = view.getUint16(offset, false);
+                            const exifStart = offset + 2;
+                            if (exifStart + 6 > view.byteLength) return 1;
+                            if (view.getUint32(exifStart, false) === 0x45786966) {
+                                const tiffStart = exifStart + 6;
+                                if (tiffStart + 4 > view.byteLength) return 1;
+                                const byteOrder = view.getUint16(tiffStart, false);
+                                const isLittle = (byteOrder === 0x4949);
+                                const ifdOffset = view.getUint32(tiffStart + 4, isLittle);
+                                const entryStart = tiffStart + ifdOffset;
+                                if (entryStart + 2 > view.byteLength) return 1;
+                                const entryCount = view.getUint16(entryStart, isLittle);
+                                for (let i = 0; i < entryCount; i++) {
+                                    const entry = entryStart + 2 + i * 12;
+                                    if (entry + 12 > view.byteLength) break;
+                                    const tag = view.getUint16(entry, isLittle);
+                                    if (tag === 0x0112) {
+                                        return view.getUint16(entry + 8, isLittle);
+                                    }
+                                }
+                            }
+                            offset += length;
+                        } else if (marker >= 0xFFE0 && marker <= 0xFFEF) {
+                            const length = view.getUint16(offset, false);
+                            offset += length;
+                        } else {
+                            break;
+                        }
+                    }
+                    return 1;
+                } catch (e) {
+                    console.warn('EXIF parsing error:', e);
+                    return 1;
+                }
+            }
+
+            // ============================================================
+            //  處理圖片
+            // ============================================================
+            function processImageFile(file) {
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    const arrayBuffer = ev.target.result;
+                    const orientation = getExifOrientation(arrayBuffer);
+                    const blob = new Blob([arrayBuffer], { type: file.type });
+                    const url = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = function() {
+                        URL.revokeObjectURL(url);
+                        const canvasRotate = document.createElement('canvas');
+                        const ctxRotate = canvasRotate.getContext('2d');
+                        let w = img.width, h = img.height;
+                        let finalW = w, finalH = h;
+                        let transform = null;
+                        switch (orientation) {
+                            case 2: transform = (ctx, w, h) => { ctx.scale(-1, 1); ctx.drawImage(img, -w, 0); }; break;
+                            case 3: transform = (ctx, w, h) => { ctx.rotate(Math.PI); ctx.drawImage(img, -w, -h); }; break;
+                            case 4: transform = (ctx, w, h) => { ctx.scale(1, -1); ctx.drawImage(img, 0, -h); }; break;
+                            case 5: transform = (ctx, w, h) => { ctx.rotate(0.5 * Math.PI); ctx.scale(1, -1); ctx.drawImage(img, 0, -w); }; finalW = h; finalH = w; break;
+                            case 6: transform = (ctx, w, h) => { ctx.rotate(0.5 * Math.PI); ctx.drawImage(img, 0, -w); }; finalW = h; finalH = w; break;
+                            case 7: transform = (ctx, w, h) => { ctx.rotate(-0.5 * Math.PI); ctx.scale(-1, 1); ctx.drawImage(img, -h, 0); }; finalW = h; finalH = w; break;
+                            case 8: transform = (ctx, w, h) => { ctx.rotate(-0.5 * Math.PI); ctx.drawImage(img, -h, 0); }; finalW = h; finalH = w; break;
+                            default: break;
+                        }
+                        canvasRotate.width = finalW;
+                        canvasRotate.height = finalH;
+                        if (transform) {
+                            ctxRotate.save();
+                            transform(ctxRotate, w, h);
+                            ctxRotate.restore();
+                        } else {
+                            ctxRotate.drawImage(img, 0, 0);
+                        }
+                        let scale = 1;
+                        if (finalW > MAX_IMAGE_SIZE || finalH > MAX_IMAGE_SIZE) {
+                            scale = Math.min(MAX_IMAGE_SIZE / finalW, MAX_IMAGE_SIZE / finalH);
+                        }
+                        const newW = Math.round(finalW * scale);
+                        const newH = Math.round(finalH * scale);
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = newW;
+                        tempCanvas.height = newH;
+                        const tempCtx = tempCanvas.getContext('2d');
+                        tempCtx.drawImage(canvasRotate, 0, 0, newW, newH);
+
+                        const scaledImg = new Image();
+                        scaledImg.onload = function() {
+                            origImage = scaledImg;
+                            if (imgMat) imgMat.delete();
+                            if (cvReady && typeof cv !== 'undefined') {
+                                const tempCanvas2 = document.createElement('canvas');
+                                tempCanvas2.width = newW;
+                                tempCanvas2.height = newH;
+                                const ctx2 = tempCanvas2.getContext('2d');
+                                ctx2.drawImage(scaledImg, 0, 0);
+                                try {
+                                    imgMat = cv.imread(tempCanvas2);
+                                } catch (e) {
+                                    console.error('cv.imread error:', e);
+                                    alert('圖片格式不支援，請嘗試其他圖片');
+                                    return;
+                                }
+                            } else {
+                                alert('OpenCV 尚未載入完成，請稍候再試');
+                                return;
+                            }
+                            fitCanvasToWindow(true);
+                            placeholder.style.display = 'none';
+                            document.getElementById('btn-auto').disabled = false;
+                            document.getElementById('btn-reset').disabled = false;
+                            document.getElementById('btn-save').disabled = false;
+                            resetToFull();
+                            autoDetect();
+                        };
+                        scaledImg.src = tempCanvas.toDataURL('image/png');
+                    };
+                    img.src = url;
+                };
+                reader.readAsArrayBuffer(file);
+            }
+
+            // ============================================================
+            //  檔案選擇
+            // ============================================================
+            function handleFileSelect(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (!cvReady || typeof cv === 'undefined') {
+                    pendingImageFile = file;
+                    alert('OpenCV 載入中，請稍後再試。若仍未就緒，請檢查網路或重新整理。');
+                    return;
+                }
+                processImageFile(file);
+            }
+
+            // ============================================================
+            //  自適應畫布
+            // ============================================================
+            function fitCanvasToWindow(force = false) {
+                if (!origImage) return;
+                if (isResizing && !force) return;
+                isResizing = true;
+
+                try {
+                    const container = document.getElementById('canvas-container');
+                    const rect = container.getBoundingClientRect();
+                    let maxW = rect.width - 4;
+                    let maxH = rect.height - 4;
+
+                    if (maxW < 10 || maxH < 10 || !isFinite(maxW) || !isFinite(maxH)) {
+                        maxW = Math.max(200, window.innerWidth * 0.8);
+                        maxH = Math.max(200, window.innerHeight * 0.6);
+                    }
+
+                    let w = origImage.width, h = origImage.height;
+                    const scale = Math.min(maxW / w, maxH / h);
+                    const newW = Math.round(w * scale);
+                    const newH = Math.round(h * scale);
+
+                    if (Math.abs(newW - lastDisplayWidth) < 2 && Math.abs(newH - lastDisplayHeight) < 2 && !force) {
+                        isResizing = false;
+                        return;
+                    }
+
+                    if (displayWidth !== newW || displayHeight !== newH) {
+                        displayWidth = newW;
+                        displayHeight = newH;
+                        canvas.width = displayWidth;
+                        canvas.height = displayHeight;
+                        lastDisplayWidth = displayWidth;
+                        lastDisplayHeight = displayHeight;
+                        scaleRatio = origImage.width / displayWidth;
+
+                        if (points.length === 4) {
+                            const oldW = canvas.width || displayWidth;
+                            const oldH = canvas.height || displayHeight;
+                            if (oldW > 0 && oldH > 0) {
+                                const sx = displayWidth / oldW;
+                                const sy = displayHeight / oldH;
+                                points = points.map(p => ({
+                                    x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
+                                    y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
+                                }));
+                            } else {
+                                resetToFull();
+                            }
+                        }
+                        redraw();
+                    }
+                } finally {
+                    isResizing = false;
+                }
+            }
+
+            const ro = new ResizeObserver(() => {
+                if (origImage) {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(() => {
+                        if (!isResizing) {
+                            fitCanvasToWindow(true);
+                        }
+                    }, 100);
+                }
+            });
+            ro.observe(document.getElementById('canvas-container'));
+
+            window.addEventListener('resize', () => {
+                if (origImage) {
+                    clearTimeout(resizeTimeout);
+                    resizeTimeout = setTimeout(() => {
+                        if (!isResizing) {
+                            fitCanvasToWindow(true);
+                        }
+                    }, 100);
+                }
+            });
+
+            // ============================================================
+            //  拖曳控制
+            // ============================================================
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            function handleStart(e) {
+                if (!points.length) return;
+                e.preventDefault();
+                const pos = getCanvasCoords(e);
+                const threshold = 30;
+                for (let i = 0; i < points.length; i++) {
+                    const dx = pos.x - points[i].x;
+                    const dy = pos.y - points[i].y;
+                    if (dx*dx + dy*dy < threshold*threshold) {
+                        selectedIdx = i;
+                        isDragging = true;
+                        break;
+                    }
+                }
+            }
+
+            function handleMove(e) {
+                if (!isDragging || selectedIdx < 0) return;
+                e.preventDefault();
+                const pos = getCanvasCoords(e);
+                const x = Math.max(2, Math.min(displayWidth - 2, pos.x));
+                const y = Math.max(2, Math.min(displayHeight - 2, pos.y));
+                points[selectedIdx] = { x, y };
+                redraw();
+            }
+
+            function handleEnd(e) {
+                if (isDragging) {
+                    isDragging = false;
+                    selectedIdx = -1;
+                }
+            }
+
+            canvas.addEventListener('mousedown', handleStart);
+            window.addEventListener('mousemove', (e) => { if (isDragging) handleMove(e); });
+            window.addEventListener('mouseup', handleEnd);
+            canvas.addEventListener('touchstart', handleStart, { passive: false });
+            window.addEventListener('touchmove', (e) => { if (isDragging) handleMove(e); }, { passive: false });
+            window.addEventListener('touchend', handleEnd);
+
+            function sortPoints(pts) {
+                let sums = pts.map(p => p.x + p.y);
+                let diffs = pts.map(p => p.y - p.x);
+                let topLeft = pts[sums.indexOf(Math.min(...sums))];
+                let bottomRight = pts[sums.indexOf(Math.max(...sums))];
+                let topRight = pts[diffs.indexOf(Math.min(...diffs))];
+                let bottomLeft = pts[diffs.indexOf(Math.max(...diffs))];
+                return [topLeft, topRight, bottomRight, bottomLeft];
+            }
+
+            // ============================================================
+            //  自動偵測
+            // ============================================================
+            function autoDetect() {
+                if (!cvReady || !imgMat) { resetToFull(); return; }
+                try {
+                    let gray = new cv.Mat();
+                    cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
+                    let blurred = new cv.Mat();
+                    cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
+                    let thresh = new cv.Mat();
+                    cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+                    let contours = new cv.MatVector();
+                    let hierarchy = new cv.Mat();
+                    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                    let totalArea = imgMat.rows * imgMat.cols;
+                    let maxArea = 0;
+                    let bestApprox = null;
+
+                    for (let i = 0; i < contours.size(); ++i) {
+                        let cnt = contours.get(i);
+                        let area = cv.contourArea(cnt);
+                        if (area < totalArea * 0.01 || area > totalArea * 0.95) {
+                            cnt.delete();
+                            continue;
+                        }
+                        let peri = cv.arcLength(cnt, true);
+                        let approx = new cv.Mat();
+                        cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+                        if (approx.rows === 4 && area > maxArea) {
+                            maxArea = area;
+                            if (bestApprox) bestApprox.delete();
+                            bestApprox = approx;
+                        } else {
+                            approx.delete();
+                        }
+                        cnt.delete();
+                    }
+
+                    if (bestApprox && maxArea > totalArea * 0.05) {
+                        let detected = [];
+                        for (let i = 0; i < 4; i++) {
+                            detected.push({
+                                x: bestApprox.data32S[i*2] / scaleRatio,
+                                y: bestApprox.data32S[i*2+1] / scaleRatio
+                            });
+                        }
+                        points = sortPoints(detected);
+                        bestApprox.delete();
+                    } else {
+                        if (bestApprox) bestApprox.delete();
+                        resetToFull();
+                    }
+                    gray.delete(); blurred.delete(); thresh.delete();
+                    contours.delete(); hierarchy.delete();
+                } catch (err) {
+                    console.warn("Auto detect error, keeping full view", err);
                     resetToFull();
                 }
-                gray.delete(); blurred.delete(); thresh.delete();
-                contours.delete(); hierarchy.delete();
-            } catch (err) {
-                console.warn("Auto detect error, keeping full view", err);
-                resetToFull();
+                redraw();
             }
-            redraw();
-        }
 
-        function resetToFull() {
-            const margin = 20;
-            if (displayWidth < 40 || displayHeight < 40) {
-                points = [
-                    { x: 0, y: 0 },
-                    { x: displayWidth || 100, y: 0 },
-                    { x: displayWidth || 100, y: displayHeight || 100 },
-                    { x: 0, y: displayHeight || 100 }
-                ];
-            } else {
-                points = [
-                    { x: margin, y: margin },
-                    { x: displayWidth - margin, y: margin },
-                    { x: displayWidth - margin, y: displayHeight - margin },
-                    { x: margin, y: displayHeight - margin }
-                ];
+            function resetToFull() {
+                const margin = 20;
+                if (displayWidth < 40 || displayHeight < 40) {
+                    points = [
+                        { x: 0, y: 0 },
+                        { x: displayWidth || 100, y: 0 },
+                        { x: displayWidth || 100, y: displayHeight || 100 },
+                        { x: 0, y: displayHeight || 100 }
+                    ];
+                } else {
+                    points = [
+                        { x: margin, y: margin },
+                        { x: displayWidth - margin, y: margin },
+                        { x: displayWidth - margin, y: displayHeight - margin },
+                        { x: margin, y: displayHeight - margin }
+                    ];
+                }
+                redraw();
             }
-            redraw();
-        }
 
-        function redraw() {
-            if (!origImage) return;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(origImage, 0, 0, displayWidth, displayHeight);
-            if (points.length === 4) {
-                ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
-                ctx.lineTo(points[1].x, points[1].y);
-                ctx.lineTo(points[2].x, points[2].y);
-                ctx.lineTo(points[3].x, points[3].y);
-                ctx.closePath();
-                ctx.fillStyle = 'rgba(0, 255, 100, 0.2)';
-                ctx.fill();
-                ctx.strokeStyle = '#00ff66';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                points.forEach(p => {
+            function redraw() {
+                if (!origImage) return;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(origImage, 0, 0, displayWidth, displayHeight);
+                if (points.length === 4) {
                     ctx.beginPath();
-                    ctx.arc(p.x, p.y, 10, 0, 2*Math.PI);
-                    ctx.fillStyle = '#0078d4';
+                    ctx.moveTo(points[0].x, points[0].y);
+                    ctx.lineTo(points[1].x, points[1].y);
+                    ctx.lineTo(points[2].x, points[2].y);
+                    ctx.lineTo(points[3].x, points[3].y);
+                    ctx.closePath();
+                    ctx.fillStyle = 'rgba(0, 255, 100, 0.2)';
                     ctx.fill();
-                    ctx.strokeStyle = '#fff';
+                    ctx.strokeStyle = '#00ff66';
                     ctx.lineWidth = 2;
                     ctx.stroke();
-                });
-            }
-        }
-
-        // ---- 彩色濾鏡 (返回 RGBA) ----
-        function applyColorPerfectFilter(srcMat) {
-            let rgbMat = new cv.Mat();
-            cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
-            let smooth = new cv.Mat();
-            cv.bilateralFilter(rgbMat, smooth, 9, 75, 75);
-            let hsv = new cv.Mat();
-            cv.cvtColor(smooth, hsv, cv.COLOR_RGB2HSV);
-            let channels = new cv.MatVector();
-            cv.split(hsv, channels);
-            let s = channels.get(1);
-            let v = channels.get(2);
-            s.convertTo(s, -1, 1.25, 0);
-            v.convertTo(v, -1, 1.1, 0);
-            cv.merge(channels, hsv);
-            let enhanced = new cv.Mat();
-            cv.cvtColor(hsv, enhanced, cv.COLOR_HSV2RGB);
-            let finalResult = new cv.Mat();
-            enhanced.convertTo(finalResult, -1, 1.1, -10);
-            let rgba = new cv.Mat();
-            cv.cvtColor(finalResult, rgba, cv.COLOR_RGB2RGBA);
-            rgbMat.delete(); smooth.delete(); hsv.delete();
-            channels.delete(); s.delete(); v.delete(); enhanced.delete(); finalResult.delete();
-            return rgba;
-        }
-
-        // ---- 判斷行動裝置 (一般用途) ----
-        function isMobileDevice() {
-            const ua = navigator.userAgent || navigator.vendor || window.opera;
-            if (/iPhone|iPad|iPod|Android|BlackBerry|Windows Phone|Opera Mini|IEMobile/i.test(ua)) return true;
-            if (window.innerWidth < 768 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
-            return false;
-        }
-
-        // ============================================================
-        //  ★★★ 全螢幕遮罩顯示 ★★★
-        // ============================================================
-        function showImageOverlay(dataUrl) {
-            lastProcessedDataURL = dataUrl;
-            const overlay = document.getElementById('image-overlay');
-            const img = document.getElementById('overlay-img');
-            img.src = dataUrl;
-            overlay.style.display = 'flex';
-        }
-
-        function closeOverlay() {
-            document.getElementById('image-overlay').style.display = 'none';
-        }
-
-        function shareOverlayImage() {
-            if (!lastProcessedDataURL) {
-                alert('請先產生圖片');
-                return;
-            }
-            fetch(lastProcessedDataURL)
-                .then(res => res.blob())
-                .then(blob => {
-                    const file = new File([blob], 'scanned_image.png', { type: 'image/png' });
-                    if (navigator.share && navigator.canShare) {
-                        navigator.share({
-                            files: [file],
-                            title: '掃描結果'
-                        }).catch(err => {
-                            if (err.name !== 'AbortError') {
-                                alert('分享失敗，請使用截圖儲存。');
-                            }
-                        });
-                    } else {
-                        alert('您的瀏覽器不支援分享功能，請使用截圖儲存。');
-                    }
-                })
-                .catch(() => {
-                    alert('無法處理圖片，請使用截圖儲存。');
-                });
-        }
-
-        // ============================================================
-        //  ★★★ 儲存邏輯 ★★★
-        // ============================================================
-        function processAndSave() {
-            if (!origImage || points.length !== 4) {
-                alert('請先載入圖片並框選區域');
-                return;
+                    points.forEach(p => {
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 10, 0, 2*Math.PI);
+                        ctx.fillStyle = '#0078d4';
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    });
+                }
             }
 
-            if (useAndroidLineMode()) {
+            // ---- 彩色濾鏡 ----
+            function applyColorPerfectFilter(srcMat) {
+                let rgbMat = new cv.Mat();
+                cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
+                let smooth = new cv.Mat();
+                cv.bilateralFilter(rgbMat, smooth, 9, 75, 75);
+                let hsv = new cv.Mat();
+                cv.cvtColor(smooth, hsv, cv.COLOR_RGB2HSV);
+                let channels = new cv.MatVector();
+                cv.split(hsv, channels);
+                let s = channels.get(1);
+                let v = channels.get(2);
+                s.convertTo(s, -1, 1.25, 0);
+                v.convertTo(v, -1, 1.1, 0);
+                cv.merge(channels, hsv);
+                let enhanced = new cv.Mat();
+                cv.cvtColor(hsv, enhanced, cv.COLOR_HSV2RGB);
+                let finalResult = new cv.Mat();
+                enhanced.convertTo(finalResult, -1, 1.1, -10);
+                let rgba = new cv.Mat();
+                cv.cvtColor(finalResult, rgba, cv.COLOR_RGB2RGBA);
+                rgbMat.delete(); smooth.delete(); hsv.delete();
+                channels.delete(); s.delete(); v.delete(); enhanced.delete(); finalResult.delete();
+                return rgba;
+            }
+
+            // ---- 判斷行動裝置 ----
+            function isMobileDevice() {
+                const ua = navigator.userAgent || navigator.vendor || window.opera;
+                if (/iPhone|iPad|iPod|Android|BlackBerry|Windows Phone|Opera Mini|IEMobile/i.test(ua)) return true;
+                if (window.innerWidth < 768 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
+                return false;
+            }
+
+            // ============================================================
+            //  全螢幕遮罩顯示
+            // ============================================================
+            function showImageOverlay(dataUrl) {
+                lastProcessedDataURL = dataUrl;
+                const overlay = document.getElementById('image-overlay');
+                const img = document.getElementById('overlay-img');
+                img.src = dataUrl;
+                overlay.style.display = 'flex';
+            }
+
+            function closeOverlay() {
+                document.getElementById('image-overlay').style.display = 'none';
+            }
+
+            function shareOverlayImage() {
+                if (!lastProcessedDataURL) {
+                    alert('請先產生圖片');
+                    return;
+                }
+                fetch(lastProcessedDataURL)
+                    .then(res => res.blob())
+                    .then(blob => {
+                        const file = new File([blob], 'scanned_image.png', { type: 'image/png' });
+                        if (navigator.share && navigator.canShare) {
+                            navigator.share({
+                                files: [file],
+                                title: '掃描結果'
+                            }).catch(err => {
+                                if (err.name !== 'AbortError') {
+                                    alert('分享失敗，請使用截圖儲存。');
+                                }
+                            });
+                        } else {
+                            alert('您的瀏覽器不支援分享功能，請使用截圖儲存。');
+                        }
+                    })
+                    .catch(() => {
+                        alert('無法處理圖片，請使用截圖儲存。');
+                    });
+            }
+
+            // ============================================================
+            //  儲存邏輯
+            // ============================================================
+            function processAndSave() {
+                if (!origImage || points.length !== 4) {
+                    alert('請先載入圖片並框選區域');
+                    return;
+                }
+
+                if (!imgMat || imgMat.empty()) {
+                    alert('圖片資料異常，請重新選取檔案');
+                    return;
+                }
+
                 const saveBtn = document.getElementById('btn-save');
                 saveBtn.disabled = true;
-                saveBtn.innerHTML = '<span class="spinner"></span> 準備中…';
+                saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
 
                 setTimeout(() => {
                     try {
@@ -892,6 +983,9 @@
                         let h1 = Math.hypot(origPts[1].x - origPts[2].x, origPts[1].y - origPts[2].y);
                         let h2 = Math.hypot(origPts[0].x - origPts[3].x, origPts[0].y - origPts[3].y);
                         let maxH = Math.max(Math.round(h1), Math.round(h2));
+
+                        if (!isFinite(maxW) || maxW < 10) maxW = 100;
+                        if (!isFinite(maxH) || maxH < 10) maxH = 100;
 
                         const MAX_OUTPUT = 2000;
                         if (maxW > MAX_OUTPUT || maxH > MAX_OUTPUT) {
@@ -914,6 +1008,7 @@
                             maxW - 1, maxH - 1,
                             0, maxH - 1
                         ]);
+
                         let M = cv.getPerspectiveTransform(srcTri, dstTri);
                         let warped = new cv.Mat();
                         let dsize = new cv.Size(maxW, maxH);
@@ -935,191 +1030,131 @@
 
                         srcTri.delete(); dstTri.delete(); M.delete();
 
-                        const dataUrl = outCanvas.toDataURL('image/png');
-                        finalMat.delete();
+                        if (useAndroidLineMode()) {
+                            const dataUrl = outCanvas.toDataURL('image/png');
+                            finalMat.delete();
+                            showImageOverlay(dataUrl);
+                            saveBtn.disabled = false;
+                            saveBtn.innerHTML = '✅ 儲存';
+                            return;
+                        }
 
-                        showImageOverlay(dataUrl);
+                        const formatChoice = document.getElementById('export-format').value;
+                        let mimeType, fileName, quality;
+                        if (formatChoice === 'png') {
+                            mimeType = 'image/png';
+                            fileName = 'scanner_output.png';
+                            quality = undefined;
+                        } else if (formatChoice === 'jpg_max') {
+                            mimeType = 'image/jpeg';
+                            fileName = 'scanner_output.jpg';
+                            quality = 1.0;
+                        } else {
+                            mimeType = 'image/jpeg';
+                            fileName = 'scanner_output.jpg';
+                            quality = 0.92;
+                        }
 
-                        saveBtn.disabled = false;
-                        saveBtn.innerHTML = '✅ 儲存';
+                        outCanvas.toBlob(function(blob) {
+                            if (!blob) {
+                                const dataUrl = outCanvas.toDataURL('image/png');
+                                showImageOverlay(dataUrl);
+                                finalMat.delete();
+                                saveBtn.disabled = false;
+                                saveBtn.innerHTML = '✅ 儲存';
+                                return;
+                            }
+
+                            const mobile = isMobileDevice();
+
+                            if (mobile && navigator.share && navigator.canShare) {
+                                const file = new File([blob], fileName, { type: mimeType });
+                                const shareData = { files: [file], title: '掃描結果' };
+                                if (navigator.canShare(shareData)) {
+                                    navigator.share(shareData)
+                                        .then(() => {
+                                            saveBtn.disabled = false;
+                                            saveBtn.innerHTML = '✅ 儲存';
+                                            finalMat.delete();
+                                        })
+                                        .catch((err) => {
+                                            if (err.name !== 'AbortError') {
+                                                const dataUrl = outCanvas.toDataURL('image/png');
+                                                showImageOverlay(dataUrl);
+                                            }
+                                            saveBtn.disabled = false;
+                                            saveBtn.innerHTML = '✅ 儲存';
+                                            finalMat.delete();
+                                        });
+                                    return;
+                                }
+                            }
+
+                            try {
+                                const link = document.createElement('a');
+                                link.download = fileName;
+                                link.href = URL.createObjectURL(blob);
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                                setTimeout(() => URL.revokeObjectURL(link.href), 8000);
+                                saveBtn.disabled = false;
+                                saveBtn.innerHTML = '✅ 儲存';
+                                finalMat.delete();
+                                return;
+                            } catch (e) {
+                                console.warn('Download failed', e);
+                            }
+
+                            const dataUrl = outCanvas.toDataURL('image/png');
+                            showImageOverlay(dataUrl);
+                            saveBtn.disabled = false;
+                            saveBtn.innerHTML = '✅ 儲存';
+                            finalMat.delete();
+
+                        }, mimeType, quality);
 
                     } catch (err) {
-                        console.error(err);
-                        alert('處理失敗，請重試。若持續失敗，請關閉「優化」功能。');
+                        console.error('Process error:', err);
+                        let msg = '處理失敗，請重試。\n';
+                        if (err.message) {
+                            msg += '錯誤訊息：' + err.message;
+                        }
+                        alert(msg);
                         saveBtn.disabled = false;
                         saveBtn.innerHTML = '✅ 儲存';
                     }
                 }, 80);
-                return;
             }
 
-            // ---- 一般模式 ----
-            const saveBtn = document.getElementById('btn-save');
-            saveBtn.disabled = true;
-            saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
+            // ---- 初始化 ----
+            resetToFull();
 
-            setTimeout(() => {
-                try {
-                    const sortedPts = sortPoints(points);
-                    const origPts = sortedPts.map(p => ({
-                        x: p.x * scaleRatio,
-                        y: p.y * scaleRatio
-                    }));
-
-                    let w1 = Math.hypot(origPts[1].x - origPts[0].x, origPts[1].y - origPts[0].y);
-                    let w2 = Math.hypot(origPts[2].x - origPts[3].x, origPts[2].y - origPts[3].y);
-                    let maxW = Math.max(Math.round(w1), Math.round(w2));
-                    let h1 = Math.hypot(origPts[1].x - origPts[2].x, origPts[1].y - origPts[2].y);
-                    let h2 = Math.hypot(origPts[0].x - origPts[3].x, origPts[0].y - origPts[3].y);
-                    let maxH = Math.max(Math.round(h1), Math.round(h2));
-
-                    const MAX_OUTPUT = 2000;
-                    if (maxW > MAX_OUTPUT || maxH > MAX_OUTPUT) {
-                        const scaleOut = Math.min(MAX_OUTPUT / maxW, MAX_OUTPUT / maxH);
-                        maxW = Math.round(maxW * scaleOut);
-                        maxH = Math.round(maxH * scaleOut);
-                    }
-                    if (maxW < 10) maxW = 100;
-                    if (maxH < 10) maxH = 100;
-
-                    let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                        origPts[0].x, origPts[0].y,
-                        origPts[1].x, origPts[1].y,
-                        origPts[2].x, origPts[2].y,
-                        origPts[3].x, origPts[3].y
-                    ]);
-                    let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                        0, 0,
-                        maxW - 1, 0,
-                        maxW - 1, maxH - 1,
-                        0, maxH - 1
-                    ]);
-                    let M = cv.getPerspectiveTransform(srcTri, dstTri);
-                    let warped = new cv.Mat();
-                    let dsize = new cv.Size(maxW, maxH);
-                    cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, new cv.Scalar());
-
-                    const applyFilter = document.getElementById('filter-check').checked;
-                    let finalMat;
-                    if (applyFilter) {
-                        finalMat = applyColorPerfectFilter(warped);
-                        warped.delete();
-                    } else {
-                        finalMat = warped;
-                    }
-
-                    const outCanvas = document.getElementById('output-canvas');
-                    outCanvas.width = maxW;
-                    outCanvas.height = maxH;
-                    cv.imshow(outCanvas, finalMat);
-
-                    srcTri.delete(); dstTri.delete(); M.delete();
-
-                    const formatChoice = document.getElementById('export-format').value;
-                    let mimeType, fileName, quality;
-                    if (formatChoice === 'png') {
-                        mimeType = 'image/png';
-                        fileName = 'scanner_output.png';
-                        quality = undefined;
-                    } else if (formatChoice === 'jpg_max') {
-                        mimeType = 'image/jpeg';
-                        fileName = 'scanner_output.jpg';
-                        quality = 1.0;
-                    } else {
-                        mimeType = 'image/jpeg';
-                        fileName = 'scanner_output.jpg';
-                        quality = 0.92;
-                    }
-
-                    outCanvas.toBlob(function(blob) {
-                        if (!blob) {
-                            const dataUrl = outCanvas.toDataURL('image/png');
-                            showImageOverlay(dataUrl);
-                            finalMat.delete();
-                            saveBtn.disabled = false;
-                            saveBtn.innerHTML = '✅ 儲存';
-                            return;
-                        }
-
-                        const mobile = isMobileDevice();
-
-                        if (mobile && navigator.share && navigator.canShare) {
-                            const file = new File([blob], fileName, { type: mimeType });
-                            const shareData = { files: [file], title: '掃描結果' };
-                            if (navigator.canShare(shareData)) {
-                                navigator.share(shareData)
-                                    .then(() => {
-                                        saveBtn.disabled = false;
-                                        saveBtn.innerHTML = '✅ 儲存';
-                                        finalMat.delete();
-                                    })
-                                    .catch((err) => {
-                                        if (err.name !== 'AbortError') {
-                                            const dataUrl = outCanvas.toDataURL('image/png');
-                                            showImageOverlay(dataUrl);
-                                        }
-                                        saveBtn.disabled = false;
-                                        saveBtn.innerHTML = '✅ 儲存';
-                                        finalMat.delete();
-                                    });
-                                return;
-                            }
-                        }
-
-                        try {
-                            const link = document.createElement('a');
-                            link.download = fileName;
-                            link.href = URL.createObjectURL(blob);
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                            setTimeout(() => URL.revokeObjectURL(link.href), 8000);
-                            saveBtn.disabled = false;
-                            saveBtn.innerHTML = '✅ 儲存';
-                            finalMat.delete();
-                            return;
-                        } catch (e) {
-                            console.warn('Download failed', e);
-                        }
-
-                        const dataUrl = outCanvas.toDataURL('image/png');
-                        showImageOverlay(dataUrl);
-                        saveBtn.disabled = false;
-                        saveBtn.innerHTML = '✅ 儲存';
-                        finalMat.delete();
-
-                    }, mimeType, quality);
-
-                } catch (err) {
-                    console.error(err);
-                    alert('處理失敗，請重試。');
-                    saveBtn.disabled = false;
-                    saveBtn.innerHTML = '✅ 儲存';
+            document.addEventListener('DOMContentLoaded', function() {
+                browserInfo = detectBrowser();
+                if (browserInfo.isAndroidLine || forceAndroidLineMode) {
+                    lineWarning.style.display = 'block';
+                } else {
+                    lineWarning.style.display = 'none';
                 }
-            }, 80);
-        }
+                if (window.cvReady) {
+                    document.getElementById('btn-auto').disabled = false;
+                    document.getElementById('btn-reset').disabled = false;
+                    document.getElementById('btn-save').disabled = false;
+                }
+            });
 
-        // ---- 初始化 ----
-        resetToFull();
+            // 暴露給全域
+            window.handleFileSelect = handleFileSelect;
+            window.autoDetect = autoDetect;
+            window.resetToFull = resetToFull;
+            window.redraw = redraw;
+            window.processAndSave = processAndSave;
+            window.shareOverlayImage = shareOverlayImage;
+            window.closeOverlay = closeOverlay;
+            window.toggleForceMode = toggleForceMode;
 
-        document.addEventListener('DOMContentLoaded', function() {
-            browserInfo = detectBrowser();
-            if (browserInfo.isAndroidLine || forceAndroidLineMode) {
-                lineWarning.style.display = 'block';
-            } else {
-                lineWarning.style.display = 'none';
-            }
-        });
-
-        window.onOpenCvReady = onOpenCvReady;
-        window.handleFileSelect = handleFileSelect;
-        window.autoDetect = autoDetect;
-        window.resetToFull = resetToFull;
-        window.redraw = redraw;
-        window.processAndSave = processAndSave;
-        window.shareOverlayImage = shareOverlayImage;
-        window.closeOverlay = closeOverlay;
-        window.toggleForceMode = toggleForceMode;
+        })();
     </script>
 </body>
 </html>
