@@ -3,32 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>AI 掃描器 (by Dustin, chuhpsdustin@gmail.com)</title>
+    <title>AI 掃描器 (by Dustin)</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
-        html, body {
-            height: 100%;
-            height: 100dvh;
-            overflow: hidden;
-            background-color: #121212;
-            color: #e0e0e0;
-        }
-        body {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            height: 100dvh;
-            overflow: hidden;
-            position: relative;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        html, body { height: 100%; height: 100dvh; overflow: hidden; background-color: #121212; color: #e0e0e0; }
+        body { display: flex; flex-direction: column; height: 100%; height: 100dvh; overflow: hidden; position: relative; }
 
-        /* LINE 警告 */
         #line-warning {
             display: none;
             background: #ff6b35;
@@ -43,15 +24,8 @@
             box-shadow: 0 2px 8px rgba(255, 107, 53, 0.4);
             animation: warnPulse 1.5s ease-in-out infinite alternate;
         }
-        #line-warning a {
-            color: #fff;
-            text-decoration: underline;
-            font-weight: 700;
-        }
-        @keyframes warnPulse {
-            0% { opacity: 0.9; }
-            100% { opacity: 1; }
-        }
+        #line-warning a { color: #fff; text-decoration: underline; font-weight: 700; }
+        @keyframes warnPulse { 0% { opacity: 0.9; } 100% { opacity: 1; } }
 
         header {
             background-color: #1e1e1e;
@@ -63,36 +37,10 @@
             flex-shrink: 0;
             min-height: 44px;
         }
-        .logo {
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: #00d26a;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .logo small {
-            font-size: 0.7rem;
-            font-weight: 400;
-            color: #888;
-            margin-left: 4px;
-        }
-        .status-badge {
-            font-size: 0.7rem;
-            padding: 3px 10px;
-            border-radius: 20px;
-            background-color: #333;
-            color: #aaa;
-            white-space: nowrap;
-            flex-shrink: 0;
-        }
-        .status-badge.ready {
-            background-color: #1b3bbb;
-            color: #8bb2ff;
-        }
+        .logo { font-size: 0.95rem; font-weight: 700; color: #00d26a; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .logo small { font-size: 0.7rem; font-weight: 400; color: #888; margin-left: 4px; }
+        .status-badge { font-size: 0.7rem; padding: 3px 10px; border-radius: 20px; background-color: #333; color: #aaa; white-space: nowrap; flex-shrink: 0; }
+        .status-badge.ready { background-color: #1b3bbb; color: #8bb2ff; }
 
         main {
             flex: 1 1 auto;
@@ -173,30 +121,18 @@
             touch-action: manipulation;
             min-height: 32px;
         }
-        .btn:active:not(:disabled) {
-            transform: scale(0.95);
-        }
-        .btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .btn:active:not(:disabled) { transform: scale(0.95); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
         .btn-primary {
             background-color: #107c41;
             border-color: #107c41;
             color: white;
             font-weight: 600;
         }
-        .btn-primary:active:not(:disabled) {
-            background-color: #0b5e31;
-        }
-        .btn-primary:disabled {
-            background-color: #1a4a2e;
-            border-color: #1a4a2e;
-        }
+        .btn-primary:active:not(:disabled) { background-color: #0b5e31; }
+        .btn-primary:disabled { background-color: #1a4a2e; border-color: #1a4a2e; }
 
-        .checkbox-label,
-        .select-label {
+        .checkbox-label, .select-label {
             display: flex;
             align-items: center;
             gap: 3px;
@@ -205,13 +141,7 @@
             color: #ccc;
             white-space: nowrap;
         }
-        .checkbox-label input[type="checkbox"] {
-            width: 14px;
-            height: 14px;
-            accent-color: #00d26a;
-            cursor: pointer;
-            flex-shrink: 0;
-        }
+        .checkbox-label input[type="checkbox"] { width: 14px; height: 14px; accent-color: #00d26a; cursor: pointer; flex-shrink: 0; }
         .custom-select {
             background-color: #2a2a2a;
             color: #fff;
@@ -223,9 +153,8 @@
             cursor: pointer;
             min-height: 28px;
         }
-
         .spinner {
-            border: 3px solid rgba(255, 255, 255, 0.1);
+            border: 3px solid rgba(255,255,255,0.1);
             width: 14px;
             height: 14px;
             border-radius: 50%;
@@ -234,14 +163,9 @@
             display: inline-block;
             flex-shrink: 0;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        #output-canvas {
-            display: none;
-        }
+        #output-canvas { display: none; }
 
         @media (max-width: 480px) {
             header { padding: 4px 8px; min-height: 38px; }
@@ -276,9 +200,7 @@
     </div>
 
     <header>
-        <div class="logo">
-            📷 AI 掃描器 <small>by Dustin</small>
-        </div>
+        <div class="logo">📷 AI 掃描器 <small>by Dustin</small></div>
         <div id="status-badge" class="status-badge">載入中…</div>
     </header>
 
@@ -319,11 +241,11 @@
         //  核心變數
         // ============================================================
         let cvReady = false;
-        let origImage = null;
-        let imgMat = null;
+        let origImage = null;        // 原始 Image 物件（已縮小）
+        let imgMat = null;           // OpenCV 矩陣（已縮小）
         let displayWidth = 0;
         let displayHeight = 0;
-        let scaleRatio = 1.0;
+        let scaleRatio = 1.0;        // 縮放比例（原圖尺寸 / 顯示尺寸）
         let points = [];
         let selectedIdx = -1;
         let isDragging = false;
@@ -333,6 +255,9 @@
         const placeholder = document.getElementById('placeholder');
         const statusBadge = document.getElementById('status-badge');
         const lineWarning = document.getElementById('line-warning');
+
+        // 最大圖片尺寸（避免記憶體不足）
+        const MAX_IMAGE_SIZE = 2000;
 
         // ============================================================
         //  偵測 LINE 瀏覽器
@@ -366,7 +291,7 @@
         }
 
         // ============================================================
-        //  檔案載入
+        //  檔案載入（自動縮小圖片）
         // ============================================================
         function handleFileSelect(e) {
             const file = e.target.files[0];
@@ -375,24 +300,45 @@
             reader.onload = function(ev) {
                 const img = new Image();
                 img.onload = function() {
-                    origImage = img;
-                    let tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = img.width;
-                    tempCanvas.height = img.height;
-                    let tempCtx = tempCanvas.getContext('2d');
-                    tempCtx.drawImage(img, 0, 0);
-                    if (imgMat) imgMat.delete();
-                    if (cvReady) {
-                        imgMat = cv.imread(tempCanvas); // RGBA
+                    // ---- 縮圖邏輯 ----
+                    let w = img.width, h = img.height;
+                    let scale = 1;
+                    if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
+                        scale = Math.min(MAX_IMAGE_SIZE / w, MAX_IMAGE_SIZE / h);
                     }
-                    fitCanvasToWindow();
-                    placeholder.style.display = 'none';
-                    document.getElementById('btn-auto').disabled = false;
-                    document.getElementById('btn-reset').disabled = false;
-                    document.getElementById('btn-save').disabled = false;
+                    const newW = Math.round(w * scale);
+                    const newH = Math.round(h * scale);
 
-                    resetToFull();
-                    autoDetect();
+                    // 畫到暫存 canvas 縮小
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = newW;
+                    tempCanvas.height = newH;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(img, 0, 0, newW, newH);
+
+                    // 儲存縮小後的 Image 物件
+                    const scaledImg = new Image();
+                    scaledImg.onload = function() {
+                        origImage = scaledImg;
+                        if (imgMat) imgMat.delete();
+                        if (cvReady) {
+                            // 從 canvas 讀取 (RGBA)
+                            const tempCanvas2 = document.createElement('canvas');
+                            tempCanvas2.width = newW;
+                            tempCanvas2.height = newH;
+                            const ctx2 = tempCanvas2.getContext('2d');
+                            ctx2.drawImage(scaledImg, 0, 0);
+                            imgMat = cv.imread(tempCanvas2);
+                        }
+                        fitCanvasToWindow();
+                        placeholder.style.display = 'none';
+                        document.getElementById('btn-auto').disabled = false;
+                        document.getElementById('btn-reset').disabled = false;
+                        document.getElementById('btn-save').disabled = false;
+                        resetToFull();
+                        autoDetect();
+                    };
+                    scaledImg.src = tempCanvas.toDataURL('image/png');
                 };
                 img.src = ev.target.result;
             };
@@ -418,6 +364,7 @@
             canvas.height = displayHeight;
             canvas.style.width = displayWidth + 'px';
             canvas.style.height = displayHeight + 'px';
+            // scaleRatio 用於將顯示座標轉回原圖座標（注意原圖已縮小）
             scaleRatio = origImage.width / displayWidth;
 
             if (points.length === 4) {
@@ -445,7 +392,6 @@
             }
         });
         ro.observe(document.getElementById('canvas-container'));
-
         window.addEventListener('resize', () => {
             if (origImage) {
                 clearTimeout(resizeTimer);
@@ -476,7 +422,7 @@
             for (let i = 0; i < points.length; i++) {
                 const dx = pos.x - points[i].x;
                 const dy = pos.y - points[i].y;
-                if (dx * dx + dy * dy < threshold * threshold) {
+                if (dx*dx + dy*dy < threshold*threshold) {
                     selectedIdx = i;
                     isDragging = true;
                     break;
@@ -504,7 +450,6 @@
         canvas.addEventListener('mousedown', handleStart);
         window.addEventListener('mousemove', (e) => { if (isDragging) handleMove(e); });
         window.addEventListener('mouseup', handleEnd);
-
         canvas.addEventListener('touchstart', handleStart, { passive: false });
         window.addEventListener('touchmove', (e) => { if (isDragging) handleMove(e); }, { passive: false });
         window.addEventListener('touchend', handleEnd);
@@ -527,13 +472,10 @@
             try {
                 let gray = new cv.Mat();
                 cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
-
                 let blurred = new cv.Mat();
-                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-
+                cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
                 let thresh = new cv.Mat();
                 cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -566,8 +508,8 @@
                     let detected = [];
                     for (let i = 0; i < 4; i++) {
                         detected.push({
-                            x: bestApprox.data32S[i * 2] / scaleRatio,
-                            y: bestApprox.data32S[i * 2 + 1] / scaleRatio
+                            x: bestApprox.data32S[i*2] / scaleRatio,
+                            y: bestApprox.data32S[i*2+1] / scaleRatio
                         });
                     }
                     points = sortPoints(detected);
@@ -576,10 +518,8 @@
                     if (bestApprox) bestApprox.delete();
                     resetToFull();
                 }
-
                 gray.delete(); blurred.delete(); thresh.delete();
                 contours.delete(); hierarchy.delete();
-
             } catch (err) {
                 console.warn("Auto detect error, keeping full view", err);
                 resetToFull();
@@ -623,10 +563,9 @@
                 ctx.strokeStyle = '#00ff66';
                 ctx.lineWidth = 2;
                 ctx.stroke();
-
                 points.forEach(p => {
                     ctx.beginPath();
-                    ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
+                    ctx.arc(p.x, p.y, 10, 0, 2*Math.PI);
                     ctx.fillStyle = '#0078d4';
                     ctx.fill();
                     ctx.strokeStyle = '#fff';
@@ -636,9 +575,8 @@
             }
         }
 
-        // ---- 彩色濾鏡 (返回 RGBA 格式) ----
+        // ---- 彩色濾鏡 (返回 RGBA) ----
         function applyColorPerfectFilter(srcMat) {
-            // srcMat 是 RGBA
             let rgbMat = new cv.Mat();
             cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
             let smooth = new cv.Mat();
@@ -656,13 +594,11 @@
             cv.cvtColor(hsv, enhanced, cv.COLOR_HSV2RGB);
             let finalResult = new cv.Mat();
             enhanced.convertTo(finalResult, -1, 1.1, -10);
-            // 轉為 RGBA
             let rgba = new cv.Mat();
             cv.cvtColor(finalResult, rgba, cv.COLOR_RGB2RGBA);
-            // 釋放中間變數
             rgbMat.delete(); smooth.delete(); hsv.delete();
             channels.delete(); s.delete(); v.delete(); enhanced.delete(); finalResult.delete();
-            return rgba; // 4 通道 RGBA
+            return rgba;
         }
 
         // ---- 判斷行動裝置 ----
@@ -674,23 +610,24 @@
         }
 
         // ============================================================
-        //  ★★★ 儲存邏輯 (修復顏色通道) ★★★
+        //  ★★★ 儲存邏輯 (加強錯誤處理與記憶體管理) ★★★
         // ============================================================
         function processAndSave() {
-            if (!origImage || points.length !== 4) return;
+            if (!origImage || points.length !== 4) {
+                alert('請先載入圖片並框選區域');
+                return;
+            }
 
             if (isLineBrowser) {
-                const confirmMsg =
-                    '⚠️ 您正在使用 LINE 內建瀏覽器，可能無法下載檔案。\n\n建議點擊右上角「⋯」→「以瀏覽器開啟」後再下載。\n\n仍要嘗試下載嗎？';
-                if (!confirm(confirmMsg)) {
-                    return;
-                }
+                const confirmMsg = '⚠️ 您正在使用 LINE 內建瀏覽器，可能無法下載檔案。\n\n建議點擊右上角「⋯」→「以瀏覽器開啟」後再下載。\n\n仍要嘗試下載嗎？';
+                if (!confirm(confirmMsg)) return;
             }
 
             const saveBtn = document.getElementById('btn-save');
             saveBtn.disabled = true;
             saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
 
+            // 使用 setTimeout 讓 UI 更新
             setTimeout(() => {
                 try {
                     const sortedPts = sortPoints(points);
@@ -699,6 +636,7 @@
                         y: p.y * scaleRatio
                     }));
 
+                    // 計算輸出尺寸
                     let w1 = Math.hypot(origPts[1].x - origPts[0].x, origPts[1].y - origPts[0].y);
                     let w2 = Math.hypot(origPts[2].x - origPts[3].x, origPts[2].y - origPts[3].y);
                     let maxW = Math.max(Math.round(w1), Math.round(w2));
@@ -706,9 +644,17 @@
                     let h2 = Math.hypot(origPts[0].x - origPts[3].x, origPts[0].y - origPts[3].y);
                     let maxH = Math.max(Math.round(h1), Math.round(h2));
 
+                    // 限制輸出最大尺寸，避免記憶體爆掉
+                    const MAX_OUTPUT = 2000;
+                    if (maxW > MAX_OUTPUT || maxH > MAX_OUTPUT) {
+                        const scaleOut = Math.min(MAX_OUTPUT / maxW, MAX_OUTPUT / maxH);
+                        maxW = Math.round(maxW * scaleOut);
+                        maxH = Math.round(maxH * scaleOut);
+                    }
                     if (maxW < 10) maxW = 100;
                     if (maxH < 10) maxH = 100;
 
+                    // 建立透視變換矩陣
                     let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
                         origPts[0].x, origPts[0].y,
                         origPts[1].x, origPts[1].y,
@@ -724,20 +670,18 @@
                     let M = cv.getPerspectiveTransform(srcTri, dstTri);
                     let warped = new cv.Mat();
                     let dsize = new cv.Size(maxW, maxH);
-                    // warped 保持與 imgMat 相同通道數 (RGBA)
                     cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, new cv.Scalar());
 
                     const applyFilter = document.getElementById('filter-check').checked;
                     let finalMat;
                     if (applyFilter) {
-                        finalMat = applyColorPerfectFilter(warped); // 返回 RGBA
+                        finalMat = applyColorPerfectFilter(warped);
                         warped.delete();
                     } else {
-                        // warped 已經是 RGBA，直接使用
-                        finalMat = warped;
+                        finalMat = warped; // 已經是 RGBA
                     }
 
-                    // 用 cv.imshow 顯示 RGBA 圖像
+                    // 顯示到 output canvas
                     const outCanvas = document.getElementById('output-canvas');
                     outCanvas.width = maxW;
                     outCanvas.height = maxH;
@@ -746,7 +690,7 @@
                     // 釋放透視變換相關
                     srcTri.delete(); dstTri.delete(); M.delete();
 
-                    // 準備儲存（從 canvas 導出）
+                    // 準備儲存
                     const formatChoice = document.getElementById('export-format').value;
                     let mimeType, fileName, quality;
                     if (formatChoice === 'png') {
@@ -773,8 +717,7 @@
                         }
 
                         const mobile = isMobileDevice();
-
-                        // 嘗試分享 (行動裝置)
+                        // 嘗試分享
                         if (mobile && navigator.share && navigator.canShare) {
                             const file = new File([blob], fileName, { type: mimeType });
                             const shareData = { files: [file], title: '掃描結果' };
@@ -805,9 +748,16 @@
 
                     }, mimeType, quality);
 
-                } catch (e) {
-                    console.error('Process error:', e);
-                    alert('處理失敗，請再試一次');
+                } catch (err) {
+                    console.error('Process error:', err);
+                    // 顯示更具體的錯誤訊息
+                    let msg = '處理失敗，請再試一次。';
+                    if (err.message && err.message.includes('out of memory')) {
+                        msg = '記憶體不足，請嘗試使用較小的圖片或關閉「優化」功能。';
+                    } else if (err.message) {
+                        msg = '處理失敗：' + err.message + '。請嘗試縮小圖片或關閉「優化」。';
+                    }
+                    alert(msg);
                     saveBtn.disabled = false;
                     saveBtn.innerHTML = '✅ 儲存';
                 }
@@ -828,7 +778,6 @@
             } catch (e) {
                 console.warn('Standard download failed', e);
             }
-
             try {
                 const url = URL.createObjectURL(blob);
                 window.open(url, '_blank');
@@ -837,16 +786,13 @@
             } catch (e) {
                 console.warn('window.open fallback failed', e);
             }
-
             try {
                 const reader = new FileReader();
                 reader.onload = function(ev) {
                     const dataUrl = ev.target.result;
                     const win = window.open('', '_blank');
                     if (win) {
-                        win.document.write(
-                            `<img src="${dataUrl}" style="max-width:100%;max-height:100%;" /><br><p style="text-align:center;font-family:sans-serif;">請長按圖片 → 儲存</p>`
-                            );
+                        win.document.write(`<img src="${dataUrl}" style="max-width:100%;max-height:100%;" /><br><p style="text-align:center;font-family:sans-serif;">請長按圖片 → 儲存</p>`);
                         win.document.title = '掃描結果 - 長按儲存';
                     } else {
                         alert('無法下載，請使用 Chrome 或 Samsung 瀏覽器開啟此頁面。');
@@ -870,7 +816,6 @@
             }
         });
 
-        // 暴露函數給全局
         window.onOpenCvReady = onOpenCvReady;
         window.handleFileSelect = handleFileSelect;
         window.autoDetect = autoDetect;
