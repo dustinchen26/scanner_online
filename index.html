@@ -4,18 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>AI 掃描器 (by Dustin)</title>
-    <!-- 先定義 onOpenCvReady 為全域函數 -->
     <script>
+        // 全域 onOpenCvReady
         window.onOpenCvReady = function() {
-            console.log('OpenCV script loaded, waiting for runtime...');
             if (typeof cv !== 'undefined') {
                 cv.onRuntimeInitialized = function() {
-                    console.log('OpenCV runtime initialized');
                     window.cvReady = true;
                     document.getElementById('status-badge').textContent = '系統就緒';
                     document.getElementById('status-badge').className = 'status-badge ready';
-                    if (window.pendingImageData) {
-                        processPendingImage(window.pendingImageData);
+                    if (window.pendingImageFile) {
+                        processPendingImage(window.pendingImageFile);
                     }
                 };
             } else {
@@ -346,7 +344,7 @@
 
     <script>
         // ============================================================
-        //  核心變數（全部包在立即函式中）
+        //  核心程式（完全自包含）
         // ============================================================
         (function() {
             let cvReady = false;
@@ -470,26 +468,30 @@
             }
 
             // ============================================================
-            //  EXIF 方向解析
+            //  EXIF 方向解析（升級版）
             // ============================================================
             function getExifOrientation(arrayBuffer) {
                 try {
                     const view = new DataView(arrayBuffer);
                     if (view.byteLength < 2) return 1;
-                    if (view.getUint16(0, false) !== 0xFFD8) return 1;
+                    if (view.getUint16(0, false) !== 0xFFD8) return 1; // 非 JPEG
+
                     let offset = 2;
                     while (offset < view.byteLength) {
                         const marker = view.getUint16(offset, false);
                         offset += 2;
-                        if (marker === 0xFFE1) {
+                        if (marker === 0xFFE1) { // APP1
                             const length = view.getUint16(offset, false);
                             const exifStart = offset + 2;
                             if (exifStart + 6 > view.byteLength) return 1;
+                            // 檢查 "Exif" 標頭
                             if (view.getUint32(exifStart, false) === 0x45786966) {
                                 const tiffStart = exifStart + 6;
                                 if (tiffStart + 4 > view.byteLength) return 1;
+                                // 讀取字節序
                                 const byteOrder = view.getUint16(tiffStart, false);
                                 const isLittle = (byteOrder === 0x4949);
+                                // 讀取第一個 IFD 偏移
                                 const ifdOffset = view.getUint32(tiffStart + 4, isLittle);
                                 const entryStart = tiffStart + ifdOffset;
                                 if (entryStart + 2 > view.byteLength) return 1;
@@ -498,13 +500,15 @@
                                     const entry = entryStart + 2 + i * 12;
                                     if (entry + 12 > view.byteLength) break;
                                     const tag = view.getUint16(entry, isLittle);
-                                    if (tag === 0x0112) {
-                                        return view.getUint16(entry + 8, isLittle);
+                                    if (tag === 0x0112) { // Orientation
+                                        const value = view.getUint16(entry + 8, isLittle);
+                                        return value;
                                     }
                                 }
                             }
                             offset += length;
                         } else if (marker >= 0xFFE0 && marker <= 0xFFEF) {
+                            // 其他 APP 段，跳過
                             const length = view.getUint16(offset, false);
                             offset += length;
                         } else {
@@ -519,18 +523,23 @@
             }
 
             // ============================================================
-            //  處理圖片
+            //  處理圖片（包含 EXIF 方向修正）
             // ============================================================
             function processImageFile(file) {
                 const reader = new FileReader();
                 reader.onload = function(ev) {
                     const arrayBuffer = ev.target.result;
-                    const orientation = getExifOrientation(arrayBuffer);
+                    let orientation = getExifOrientation(arrayBuffer);
+                    // 若無法讀取（如 HEIC 格式），orientation 可能為 1，但實際需旋轉。
+                    // 但瀏覽器通常會將 HEIC 轉為 JPEG，所以應有 EXIF。
+                    // 若仍為 1，則我們可以嘗試根據圖片寬高推測是否需旋轉（不精確，但可作為備用）
+                    // 但我們先不猜測，因為會誤判。
                     const blob = new Blob([arrayBuffer], { type: file.type });
                     const url = URL.createObjectURL(blob);
                     const img = new Image();
                     img.onload = function() {
                         URL.revokeObjectURL(url);
+                        // 繪製到 canvas 並套用方向修正
                         const canvasRotate = document.createElement('canvas');
                         const ctxRotate = canvasRotate.getContext('2d');
                         let w = img.width, h = img.height;
@@ -555,6 +564,7 @@
                         } else {
                             ctxRotate.drawImage(img, 0, 0);
                         }
+                        // 縮小尺寸
                         let scale = 1;
                         if (finalW > MAX_IMAGE_SIZE || finalH > MAX_IMAGE_SIZE) {
                             scale = Math.min(MAX_IMAGE_SIZE / finalW, MAX_IMAGE_SIZE / finalH);
@@ -618,7 +628,7 @@
             }
 
             // ============================================================
-            //  自適應畫布
+            //  自適應畫布（穩定版）
             // ============================================================
             function fitCanvasToWindow(force = false) {
                 if (!origImage) return;
