@@ -3,19 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 彩色掃描器 (手機相簿 / 電腦下載)</title>
+    <title>AI 掃描器 (經典拖拽 + 高畫質)</title>
     <!-- Async OpenCV.js -->
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-        body { background-color: #121212; color: #e0e0e0; display: flex; flex-direction: column; min-height: 100vh; }
+        body { background-color: #121212; color: #e0e0e0; display: flex; flex-direction: column; min-height: 100vh; overflow: hidden; }
         header { background-color: #1e1e1e; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2d2d2d; flex-shrink: 0; }
         .logo { font-size: 1.1rem; font-weight: 700; color: #00d26a; display: flex; align-items: center; gap: 8px; }
         .status-badge { font-size: 0.85rem; padding: 4px 10px; border-radius: 20px; background-color: #333; color: #aaa; }
         .status-badge.ready { background-color: #1b3bbb; color: #8bb2ff; }
-        main { flex: 1; position: relative; display: flex; justify-content: center; align-items: center; background-color: #0a0a0a; padding: 15px; min-height: 300px; }
+        main { flex: 1; position: relative; display: flex; justify-content: center; align-items: center; background-color: #0a0a0a; padding: 10px; min-height: 0; }
         #canvas-container { position: relative; box-shadow: 0 8px 30px rgba(0,0,0,0.8); border-radius: 8px; overflow: hidden; background: #181818; max-width: 100%; max-height: 100%; display: flex; justify-content: center; align-items: center; }
-        canvas { display: block; cursor: crosshair; touch-action: none; }
+        canvas { display: block; cursor: crosshair; touch-action: none; } /* 關鍵：防止觸控拖動頁面 */
         .placeholder-text { position: absolute; color: #666; font-size: 1.1rem; text-align: center; pointer-events: none; padding: 0 20px; }
         footer { background-color: #1e1e1e; padding: 14px 24px; display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; border-top: 1px solid #2d2d2d; flex-shrink: 0; }
         .control-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -46,7 +46,7 @@
     <header>
         <div class="logo">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4a2 2 0 0 1 2-2h3"/><path d="M15 2h3a2 2 0 0 1 2 2v3"/><path d="M20 17v3a2 2 0 0 1-2 2h-3"/><path d="M9 22H6a2 2 0 0 1-2-2v-3"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
-            AI 掃描器 (手機相簿/電腦下載)
+            掃描器 (經典拖拽)
         </div>
         <div id="status-badge" class="status-badge">載入 OpenCV 中...</div>
     </header>
@@ -74,9 +74,9 @@
             <label class="select-label">
                 格式:
                 <select id="export-format" class="custom-select">
-                    <option value="png">PNG (無損最高)</option>
-                    <option value="jpg_max">JPG (100% 品質)</option>
-                    <option value="jpg_standard">JPG (92% 標準)</option>
+                    <option value="png">PNG (無損)</option>
+                    <option value="jpg_max">JPG (100%)</option>
+                    <option value="jpg_standard">JPG (92%)</option>
                 </select>
             </label>
         </div>
@@ -91,12 +91,17 @@
     <canvas id="output-canvas"></canvas>
 
     <script>
+        // ============================================================
+        //  OpenCV 初始化 & 圖片載入
+        // ============================================================
         let cvReady = false;
-        let origImage = null;
-        let imgMat = null;
+        let origImage = null;   // HTMLImageElement
+        let imgMat = null;      // cv.Mat (原始)
         let displayWidth = 0;
         let displayHeight = 0;
-        let scaleRatio = 1.0;
+        let scaleRatio = 1.0;   // 原始尺寸 / 顯示尺寸
+
+        // 控制點 (顯示座標)
         let points = [];
         let selectedPointIdx = null;
 
@@ -122,6 +127,7 @@
                 const img = new Image();
                 img.onload = function() {
                     origImage = img;
+                    // 轉為 cv.Mat
                     let tempCanvas = document.createElement('canvas');
                     tempCanvas.width = img.width;
                     tempCanvas.height = img.height;
@@ -143,11 +149,12 @@
             reader.readAsDataURL(file);
         }
 
+        // ---- 調整顯示尺寸 ----
         function fitCanvasToWindow() {
             if (!origImage) return;
             const mainEl = document.querySelector('main');
-            const maxW = mainEl.clientWidth - 30;
-            const maxH = mainEl.clientHeight - 30;
+            const maxW = mainEl.clientWidth - 20;
+            const maxH = mainEl.clientHeight - 20;
             let w = origImage.width, h = origImage.height;
             const scale = Math.min(maxW / w, maxH / h, 1.0);
             displayWidth = Math.round(w * scale);
@@ -170,19 +177,87 @@
             }
         });
 
-        // ---- Pointer Events 觸控支援 ----
-        canvas.addEventListener('pointerdown', (e) => {
-            if (!points.length) return;
+        // ============================================================
+        //  繪圖 & 控制點 (經典拖拽邏輯，完全複製第一版)
+        // ============================================================
+        function redraw() {
+            if (!origImage) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(origImage, 0, 0, displayWidth, displayHeight);
+
+            if (points.length === 4) {
+                // 畫四邊形
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+                ctx.lineTo(points[1].x, points[1].y);
+                ctx.lineTo(points[2].x, points[2].y);
+                ctx.lineTo(points[3].x, points[3].y);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(0, 255, 100, 0.15)';
+                ctx.fill();
+                ctx.strokeStyle = '#00ff88';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 4]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 畫控制點 (與第一版完全一致)
+                const colors = ['#ff6b6b', '#ffd93d', '#6bcbff', '#a66cff'];
+                points.forEach((p, i) => {
+                    // 外圈光暈
+                    const grad = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 16);
+                    grad.addColorStop(0, colors[i]);
+                    grad.addColorStop(1, 'rgba(255,255,255,0)');
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 16, 0, 2 * Math.PI);
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+
+                    // 實心圓
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 8, 0, 2 * Math.PI);
+                    ctx.fillStyle = colors[i];
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // 標籤
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillText(i + 1, p.x, p.y - 12);
+                });
+            }
+        }
+
+        // ============================================================
+        //  經典拖拽事件 (複製自第一版，確保觸控不滑動)
+        // ============================================================
+        function getMousePos(e) {
             const rect = canvas.getBoundingClientRect();
-            const clickX = e.clientX - rect.left;
-            const clickY = e.clientY - rect.top;
-            const touchRadius = e.pointerType === 'touch' ? 35 : 25;
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: (e.clientX - rect.left) * scaleX,
+                y: (e.clientY - rect.top) * scaleY
+            };
+        }
+
+        // 使用 pointer events 統一處理滑鼠與觸控
+        canvas.addEventListener('pointerdown', (e) => {
+            if (!origImage || points.length !== 4) return;
+            const pos = getMousePos(e);
+            const threshold = (e.pointerType === 'touch') ? 35 : 25; // 手機放寬
             for (let i = 0; i < points.length; i++) {
-                const dist = Math.hypot(points[i].x - clickX, points[i].y - clickY);
-                if (dist < touchRadius) {
+                const dx = pos.x - points[i].x;
+                const dy = pos.y - points[i].y;
+                if (dx * dx + dy * dy < threshold * threshold) {
                     selectedPointIdx = i;
                     canvas.setPointerCapture(e.pointerId);
-                    e.preventDefault();
+                    e.preventDefault(); // 關鍵：防止觸控捲動
+                    canvas.style.cursor = 'grabbing';
                     break;
                 }
             }
@@ -190,25 +265,43 @@
 
         canvas.addEventListener('pointermove', (e) => {
             if (selectedPointIdx !== null) {
-                const rect = canvas.getBoundingClientRect();
-                let x = Math.max(0, Math.min(displayWidth, e.clientX - rect.left));
-                let y = Math.max(0, Math.min(displayHeight, e.clientY - rect.top));
+                const pos = getMousePos(e);
+                // 限制在畫布內
+                const x = Math.max(5, Math.min(canvas.width - 5, pos.x));
+                const y = Math.max(5, Math.min(canvas.height - 5, pos.y));
                 points[selectedPointIdx] = { x, y };
                 redraw();
                 e.preventDefault();
+            } else {
+                // 更新游標樣式
+                if (origImage && points.length === 4) {
+                    const pos = getMousePos(e);
+                    let hover = false;
+                    const threshold = (e.pointerType === 'touch') ? 35 : 25;
+                    for (let i = 0; i < points.length; i++) {
+                        const dx = pos.x - points[i].x;
+                        const dy = pos.y - points[i].y;
+                        if (dx * dx + dy * dy < threshold * threshold) { hover = true; break; }
+                    }
+                    canvas.style.cursor = hover ? 'grab' : 'default';
+                }
             }
         });
 
-        const stopDragging = (e) => {
+        const stopDrag = (e) => {
             if (selectedPointIdx !== null) {
-                try { canvas.releasePointerCapture(e.pointerId); } catch(err){}
                 selectedPointIdx = null;
+                canvas.style.cursor = 'default';
+                try { canvas.releasePointerCapture(e.pointerId); } catch(err) {}
+                redraw(); // 重繪確保狀態
             }
         };
-        canvas.addEventListener('pointerup', stopDragging);
-        canvas.addEventListener('pointercancel', stopDragging);
+        canvas.addEventListener('pointerup', stopDrag);
+        canvas.addEventListener('pointercancel', stopDrag);
 
-        // ---- 自動偵測 ----
+        // ============================================================
+        //  自動偵測 (沿用 OpenCV 邏輯)
+        // ============================================================
         function autoDetect() {
             if (!cvReady || !imgMat) { resetToFull(); return; }
             try {
@@ -277,35 +370,9 @@
             redraw();
         }
 
-        function redraw() {
-            if (!origImage) return;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(origImage, 0, 0, displayWidth, displayHeight);
-            if (points.length === 4) {
-                ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
-                ctx.lineTo(points[1].x, points[1].y);
-                ctx.lineTo(points[2].x, points[2].y);
-                ctx.lineTo(points[3].x, points[3].y);
-                ctx.closePath();
-                ctx.fillStyle = 'rgba(0, 255, 100, 0.2)';
-                ctx.fill();
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#00ff66';
-                ctx.stroke();
-                points.forEach(p => {
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
-                    ctx.fillStyle = '#0078d4';
-                    ctx.fill();
-                    ctx.lineWidth = 2;
-                    ctx.strokeStyle = '#ffffff';
-                    ctx.stroke();
-                });
-            }
-        }
-
-        // ---- 彩色濾鏡 ----
+        // ============================================================
+        //  彩色濾鏡 (OpenCV)
+        // ============================================================
         function applyColorPerfectFilter(srcMat) {
             let rgbMat = new cv.Mat();
             cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
@@ -329,22 +396,20 @@
             return finalResult;
         }
 
-        // ================================================================
-        //  判斷是否為行動裝置（手機／平板）
-        // ================================================================
+        // ============================================================
+        //  行動裝置判斷
+        // ============================================================
         function isMobileDevice() {
-            // 利用 User-Agent 和觸控支援綜合判斷
             const ua = navigator.userAgent || navigator.vendor || window.opera;
             const mobileRegex = /iPhone|iPad|iPod|Android|BlackBerry|Windows Phone|Opera Mini|IEMobile/i;
             if (mobileRegex.test(ua)) return true;
-            // 若螢幕寬度小於 768px 且支援觸控，視為行動裝置
             if (window.innerWidth < 768 && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) return true;
             return false;
         }
 
-        // ================================================================
-        //  ★★★ 核心儲存邏輯（手機→相簿，電腦→下載） ★★★
-        // ================================================================
+        // ============================================================
+        //  核心儲存 (LANCZOS 高畫質 + 手機相簿 / 電腦下載)
+        // ============================================================
         function processAndSave() {
             if (!origImage || points.length !== 4) return;
 
@@ -381,7 +446,9 @@
                     let M = cv.getPerspectiveTransform(srcTri, dstTri);
                     let warped = new cv.Mat();
                     let dsize = new cv.Size(maxWidth, maxHeight);
-                    cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_CUBIC, cv.BORDER_CONSTANT, new cv.Scalar());
+
+                    // 使用 LANCZOS 最高品質
+                    cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, new cv.Scalar());
 
                     const applyFilter = document.getElementById('filter-check').checked;
                     let finalMat = warped;
@@ -397,7 +464,6 @@
 
                     srcTri.delete(); dstTri.delete(); M.delete(); finalMat.delete();
 
-                    // ---- 決定輸出格式 ----
                     const formatChoice = document.getElementById('export-format').value;
                     let mimeType, fileName, quality;
                     if (formatChoice === 'png') {
@@ -414,7 +480,6 @@
                         quality = 0.92;
                     }
 
-                    // ---- 取得圖片 Blob ----
                     outCanvas.toBlob(function(blob) {
                         if (!blob) {
                             alert('無法產生圖片，請重試');
@@ -423,26 +488,22 @@
                             return;
                         }
 
-                        // 決定儲存方式
                         const mobile = isMobileDevice();
                         if (mobile && navigator.share && navigator.canShare) {
-                            // 行動裝置且支援分享 API → 使用分享（可存入相簿）
                             const file = new File([blob], fileName, { type: mimeType });
                             const shareData = {
                                 files: [file],
                                 title: '掃描結果',
-                                text: 'AI 掃描校正後的圖片'
+                                text: 'AI 掃描校正'
                             };
                             if (navigator.canShare(shareData)) {
                                 navigator.share(shareData)
                                     .then(() => {
-                                        console.log('分享成功，用戶可選擇儲存至相簿');
                                         saveBtn.disabled = false;
                                         saveBtn.innerHTML = '✅ 轉正並儲存';
                                     })
                                     .catch((err) => {
                                         if (err.name !== 'AbortError') {
-                                            console.warn('分享取消或失敗，改用下載', err);
                                             fallbackDownload(blob, fileName);
                                         }
                                         saveBtn.disabled = false;
@@ -451,8 +512,6 @@
                                 return;
                             }
                         }
-
-                        // 非行動裝置 或 不支援分享 API → 直接下載
                         fallbackDownload(blob, fileName);
 
                     }, mimeType, quality);
@@ -466,7 +525,6 @@
             }, 50);
         }
 
-        // 傳統下載 (電腦或備用)
         function fallbackDownload(blob, fileName) {
             const link = document.createElement('a');
             link.download = fileName;
