@@ -21,11 +21,10 @@
             flex-shrink: 0;
             width: 100%;
             z-index: 999;
-            box-shadow: 0 2px 8px rgba(255, 107, 53, 0.4);
+            box-shadow: 0 2px 8px rgba(255,107,53,0.4);
             animation: warnPulse 1.5s ease-in-out infinite alternate;
             position: relative;
         }
-        #line-warning a { color: #fff; text-decoration: underline; font-weight: 700; }
         #line-warning .switch-mode {
             display: inline-block;
             margin-left: 12px;
@@ -52,6 +51,7 @@
         .logo small { font-size: 0.7rem; font-weight: 400; color: #888; margin-left: 4px; }
         .status-badge { font-size: 0.7rem; padding: 3px 10px; border-radius: 20px; background-color: #333; color: #aaa; white-space: nowrap; flex-shrink: 0; }
         .status-badge.ready { background-color: #1b3bbb; color: #8bb2ff; }
+        .status-badge.android-line { background-color: #6b2a1a; color: #ff9966; }
 
         main {
             flex: 1 1 auto;
@@ -66,7 +66,7 @@
         }
         #canvas-container {
             position: relative;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.8);
             border-radius: 6px;
             overflow: hidden;
             background: #181818;
@@ -178,7 +178,7 @@
 
         #output-canvas { display: none; }
 
-        /* 全螢幕遮罩 */
+        /* 全螢幕遮罩（僅 Android LINE 使用） */
         #image-overlay {
             display: none;
             position: fixed;
@@ -269,10 +269,9 @@
     </style>
 </head>
 <body>
-
-    <!-- LINE 警告 -->
+    <!-- LINE 警告（僅 Android LINE 顯示） -->
     <div id="line-warning">
-        <span id="warning-text">⚠️ 偵測到 LINE 瀏覽器，下載可能受限。</span>
+        <span id="warning-text">⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。</span>
         <span class="switch-mode" onclick="toggleForceMode()">🔄 切換模式</span>
         <span style="display:inline-block;margin-left:6px;font-size:1.2rem;">📱</span>
     </div>
@@ -296,7 +295,6 @@
             <button class="btn" id="btn-auto" onclick="autoDetect()" disabled>🔍 自動</button>
             <button class="btn" id="btn-reset" onclick="resetToFull()" disabled>🔄 全畫面</button>
         </div>
-
         <div class="control-group">
             <label class="checkbox-label">
                 <input type="checkbox" id="filter-check" onchange="redraw()"> 優化
@@ -322,7 +320,7 @@
             <button class="close" onclick="closeOverlay()">✕ 關閉</button>
         </div>
         <p>📸 點「分享」可儲存至相簿；若無效，請 <b>截圖</b> 儲存</p>
-        <p class="hint">💡 建議使用 Chrome / Safari 瀏覽器以獲得完整下載功能</p>
+        <p class="hint">💡 建議使用 Chrome / Samsung 瀏覽器以獲得完整下載功能</p>
     </div>
 
     <script>
@@ -338,6 +336,7 @@
         let points = [];
         let selectedIdx = -1;
         let isDragging = false;
+        let fitting = false; // 避免 fitCanvasToWindow 遞迴
 
         const canvas = document.getElementById('main-canvas');
         const ctx = canvas.getContext('2d');
@@ -348,86 +347,55 @@
 
         const MAX_IMAGE_SIZE = 2000;
         let lastProcessedDataURL = null;
-        let forceAndroidLineMode = false; // 手動強制模式
+        let forceAndroidLineMode = false;
 
         // ============================================================
-        //  ★★★ 精確裝置偵測（採用業界標準方法） ★★★
+        //  精確裝置偵測（僅 Android LINE 顯示警告，iPhone LINE 無警告）
         // ============================================================
         function detectBrowser() {
             const ua = navigator.userAgent;
-            // 使用正規方式判斷 iOS：檢查是否包含 iPhone/iPad/iPod，或者 Mac 且包含 Mobile
-            const isIOS = /iPad|iPhone|iPod/.test(ua) ||
-                          (/Mac OS X/.test(ua) && /Mobile/.test(ua));
-            // 判斷 Android（必須包含 Android 且不包含 Windows）
+            const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua));
             const isAndroid = /Android/.test(ua) && !/Windows/.test(ua);
-            // 判斷 iPad 桌面版模式（可能回報 Mac OS X 但帶有 touch 能力）
             const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
-            // 真正的 iPhone（排除 iPad 桌面版）
             const isIPhone = (/iPhone/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua))) && !isIPadDesktop;
-
-            // 檢查 LINE
             const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
-            
-            // 精確判斷
             const isAndroidLine = isAndroid && isLine;
-            const isIPhoneLine = isIPhone && isLine;
 
-            // 顯示警告資訊
-            let warningMsg = '';
-            if (isLine) {
+            if (isAndroidLine) {
                 lineWarning.style.display = 'block';
-                if (isAndroidLine) {
-                    warningMsg = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
-                    statusBadge.textContent = '⚠️ Android LINE';
-                    statusBadge.style.backgroundColor = '#6b2a1a';
-                    statusBadge.style.color = '#ff9966';
-                } else if (isIPhoneLine) {
-                    warningMsg = '⚠️ 偵測到 iPhone LINE 瀏覽器，建議使用「分享」或「以 Safari 開啟」以獲得最佳體驗。';
-                    statusBadge.textContent = '⚠️ iPhone LINE';
-                    statusBadge.style.backgroundColor = '#6b2a1a';
-                    statusBadge.style.color = '#ff9966';
+                warningText.textContent = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
+                statusBadge.textContent = '⚠️ Android LINE';
+                statusBadge.className = 'status-badge android-line';
+            } else {
+                lineWarning.style.display = 'none';
+                if (cvReady) {
+                    statusBadge.textContent = '系統就緒';
+                    statusBadge.className = 'status-badge ready';
                 } else {
-                    warningMsg = '⚠️ 偵測到 LINE 瀏覽器（非 Android/iPhone），下載可能受限。建議點右上角「⋯」→「以瀏覽器開啟」。';
-                    statusBadge.textContent = '⚠️ LINE 瀏覽器';
-                    statusBadge.style.backgroundColor = '#6b2a1a';
-                    statusBadge.style.color = '#ff9966';
+                    statusBadge.textContent = '載入中…';
+                    statusBadge.className = 'status-badge';
                 }
             }
-            if (warningMsg) warningText.textContent = warningMsg;
-
-            // 除錯輸出（可於控制台查看）
-            console.log('Device Detection:', { ua, isIOS, isAndroid, isIPhone, isLine, isAndroidLine, isIPhoneLine });
-
-            return {
-                isLine,
-                isAndroid,
-                isIOS,
-                isIPhone,
-                isAndroidLine,
-                isIPhoneLine,
-                isIPadDesktop
-            };
+            return { isAndroidLine, isIPhone, isLine };
         }
 
-        // 手動切換模式
         function toggleForceMode() {
             forceAndroidLineMode = !forceAndroidLineMode;
             const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
             alert(msg);
-            // 重新整理狀態
             const info = detectBrowser();
             if (forceAndroidLineMode) {
-                statusBadge.textContent = '🔧 遮罩強制';
-                statusBadge.style.backgroundColor = '#6b2a1a';
-                statusBadge.style.color = '#ff9966';
+                lineWarning.style.display = 'block';
                 warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
+                statusBadge.textContent = '🔧 遮罩強制';
+                statusBadge.className = 'status-badge android-line';
             } else {
-                if (!info.isLine) {
-                    statusBadge.textContent = '系統就緒';
-                    statusBadge.classList.add('ready');
+                if (!info.isAndroidLine) {
                     lineWarning.style.display = 'none';
-                } else {
-                    detectBrowser(); // 重新套用自動偵測
+                    if (cvReady) {
+                        statusBadge.textContent = '系統就緒';
+                        statusBadge.className = 'status-badge ready';
+                    }
                 }
             }
         }
@@ -435,8 +403,7 @@
         let browserInfo = detectBrowser();
 
         function useAndroidLineMode() {
-            if (forceAndroidLineMode) return true;
-            return browserInfo.isAndroidLine;
+            return forceAndroidLineMode || browserInfo.isAndroidLine;
         }
 
         // ============================================================
@@ -445,13 +412,10 @@
         function onOpenCvReady() {
             cv.onRuntimeInitialized = () => {
                 cvReady = true;
-                if (!browserInfo.isLine && !forceAndroidLineMode) {
+                browserInfo = detectBrowser();
+                if (!browserInfo.isAndroidLine && !forceAndroidLineMode) {
                     statusBadge.textContent = '系統就緒';
-                    statusBadge.classList.add('ready');
-                } else if (useAndroidLineMode()) {
-                    statusBadge.textContent = '⚠️ 遮罩模式';
-                } else {
-                    statusBadge.textContent = '⚠️ 請用瀏覽器開啟';
+                    statusBadge.className = 'status-badge ready';
                 }
             };
         }
@@ -492,7 +456,7 @@
                             ctx2.drawImage(scaledImg, 0, 0);
                             imgMat = cv.imread(tempCanvas2);
                         }
-                        fitCanvasToWindow();
+                        fitCanvasToWindow(true); // 強制重新計算
                         placeholder.style.display = 'none';
                         document.getElementById('btn-auto').disabled = false;
                         document.getElementById('btn-reset').disabled = false;
@@ -508,55 +472,71 @@
         }
 
         // ============================================================
-        //  自適應畫布
+        //  自適應畫布（穩定版，防止越縮越小）
         // ============================================================
-        function fitCanvasToWindow() {
+        function fitCanvasToWindow(force = false) {
             if (!origImage) return;
+            if (fitting && !force) return;
+            fitting = true;
+
             const container = document.getElementById('canvas-container');
             const rect = container.getBoundingClientRect();
-            const maxW = rect.width - 4;
-            const maxH = rect.height - 4;
-            if (maxW < 10 || maxH < 10) return;
+            let maxW = rect.width - 4;
+            let maxH = rect.height - 4;
+
+            // 防呆：若尺寸無效，使用備用值
+            if (maxW < 10 || maxH < 10 || !isFinite(maxW) || !isFinite(maxH)) {
+                maxW = Math.max(200, window.innerWidth * 0.8);
+                maxH = Math.max(200, window.innerHeight * 0.6);
+            }
 
             let w = origImage.width, h = origImage.height;
             const scale = Math.min(maxW / w, maxH / h);
-            displayWidth = Math.round(w * scale);
-            displayHeight = Math.round(h * scale);
-            canvas.width = displayWidth;
-            canvas.height = displayHeight;
-            canvas.style.width = displayWidth + 'px';
-            canvas.style.height = displayHeight + 'px';
-            scaleRatio = origImage.width / displayWidth;
+            const newW = Math.round(w * scale);
+            const newH = Math.round(h * scale);
 
-            if (points.length === 4) {
-                const oldW = canvas.width || displayWidth;
-                const oldH = canvas.height || displayHeight;
-                if (oldW > 0 && oldH > 0) {
-                    const sx = displayWidth / oldW;
-                    const sy = displayHeight / oldH;
-                    points = points.map(p => ({
-                        x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
-                        y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
-                    }));
-                } else {
-                    resetToFull();
+            // 只有尺寸真正變化時才更新
+            if (displayWidth !== newW || displayHeight !== newH) {
+                displayWidth = newW;
+                displayHeight = newH;
+                canvas.width = displayWidth;
+                canvas.height = displayHeight;
+                canvas.style.width = displayWidth + 'px';
+                canvas.style.height = displayHeight + 'px';
+                scaleRatio = origImage.width / displayWidth;
+
+                if (points.length === 4) {
+                    const oldW = canvas.width || displayWidth;
+                    const oldH = canvas.height || displayHeight;
+                    if (oldW > 0 && oldH > 0) {
+                        const sx = displayWidth / oldW;
+                        const sy = displayHeight / oldH;
+                        points = points.map(p => ({
+                            x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
+                            y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
+                        }));
+                    } else {
+                        resetToFull();
+                    }
                 }
+                redraw();
             }
-            redraw();
+            fitting = false;
         }
 
+        // 防抖監聽 resize
         let resizeTimer = null;
         const ro = new ResizeObserver(() => {
             if (origImage) {
                 clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(fitCanvasToWindow, 50);
+                resizeTimer = setTimeout(() => { fitCanvasToWindow(true); }, 100);
             }
         });
         ro.observe(document.getElementById('canvas-container'));
         window.addEventListener('resize', () => {
             if (origImage) {
                 clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(fitCanvasToWindow, 50);
+                resizeTimer = setTimeout(() => { fitCanvasToWindow(true); }, 100);
             }
         });
 
@@ -813,7 +793,7 @@
         }
 
         // ============================================================
-        //  ★★★ 儲存邏輯（根據模式選擇） ★★★
+        //  ★★★ 儲存邏輯 ★★★
         // ============================================================
         function processAndSave() {
             if (!origImage || points.length !== 4) {
@@ -982,7 +962,6 @@
 
                     outCanvas.toBlob(function(blob) {
                         if (!blob) {
-                            // 若 blob 失敗，改為遮罩顯示
                             const dataUrl = outCanvas.toDataURL('image/png');
                             showImageOverlay(dataUrl);
                             finalMat.delete();
@@ -1006,7 +985,6 @@
                                     })
                                     .catch((err) => {
                                         if (err.name !== 'AbortError') {
-                                            // 分享失敗，轉為遮罩顯示
                                             const dataUrl = outCanvas.toDataURL('image/png');
                                             showImageOverlay(dataUrl);
                                         }
@@ -1057,8 +1035,11 @@
         resetToFull();
 
         document.addEventListener('DOMContentLoaded', function() {
-            if (browserInfo.isLine || forceAndroidLineMode) {
+            browserInfo = detectBrowser();
+            if (browserInfo.isAndroidLine || forceAndroidLineMode) {
                 lineWarning.style.display = 'block';
+            } else {
+                lineWarning.style.display = 'none';
             }
         });
 
