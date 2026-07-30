@@ -2,47 +2,71 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 掃描器 (預設全畫面)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AI 掃描器 (by Dustin)</title>
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
-        html, body { height: 100%; overflow: hidden; }
-        body {
-            background-color: #121212;
-            color: #e0e0e0;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            overflow: hidden;
+        html, body { height: 100%; height: 100dvh; overflow: hidden; background-color: #121212; color: #e0e0e0; }
+        body { display: flex; flex-direction: column; height: 100%; height: 100dvh; overflow: hidden; position: relative; }
+
+        #line-warning {
+            display: none;
+            background: #ff6b35;
+            color: #fff;
+            text-align: center;
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            flex-shrink: 0;
+            width: 100%;
+            z-index: 999;
+            box-shadow: 0 2px 8px rgba(255, 107, 53, 0.4);
+            animation: warnPulse 1.5s ease-in-out infinite alternate;
+            position: relative;
         }
+        #line-warning a { color: #fff; text-decoration: underline; font-weight: 700; }
+        #line-warning .switch-mode {
+            display: inline-block;
+            margin-left: 12px;
+            background: rgba(255,255,255,0.2);
+            padding: 2px 12px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+        @keyframes warnPulse { 0% { opacity: 0.9; } 100% { opacity: 1; } }
+
         header {
             background-color: #1e1e1e;
-            padding: 10px 16px;
+            padding: 8px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid #2d2d2d;
             flex-shrink: 0;
+            min-height: 44px;
         }
-        .logo { font-size: 1rem; font-weight: 700; color: #00d26a; display: flex; align-items: center; gap: 6px; }
-        .status-badge { font-size: 0.75rem; padding: 3px 8px; border-radius: 20px; background-color: #333; color: #aaa; }
+        .logo { font-size: 0.95rem; font-weight: 700; color: #00d26a; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .logo small { font-size: 0.7rem; font-weight: 400; color: #888; margin-left: 4px; }
+        .status-badge { font-size: 0.7rem; padding: 3px 10px; border-radius: 20px; background-color: #333; color: #aaa; white-space: nowrap; flex-shrink: 0; }
         .status-badge.ready { background-color: #1b3bbb; color: #8bb2ff; }
 
         main {
-            flex: 1;
+            flex: 1 1 auto;
             position: relative;
             display: flex;
             justify-content: center;
             align-items: center;
             background-color: #0a0a0a;
-            padding: 8px;
+            padding: 4px;
             min-height: 0;
             overflow: hidden;
         }
         #canvas-container {
             position: relative;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.8);
             border-radius: 6px;
             overflow: hidden;
             background: #181818;
@@ -52,10 +76,15 @@
             justify-content: center;
             align-items: center;
         }
-        canvas {
+        #main-canvas {
             display: block;
             touch-action: none;
             cursor: crosshair;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
         }
         .placeholder-text {
             position: absolute;
@@ -64,32 +93,34 @@
             text-align: center;
             pointer-events: none;
             padding: 0 16px;
+            user-select: none;
         }
 
         footer {
             background-color: #1e1e1e;
-            padding: 8px 12px;
+            padding: 6px 10px;
             display: flex;
             flex-wrap: wrap;
-            gap: 6px;
+            gap: 4px 6px;
             justify-content: space-between;
             align-items: center;
             border-top: 1px solid #2d2d2d;
             flex-shrink: 0;
+            min-height: 48px;
         }
         .control-group {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 4px;
             flex-wrap: wrap;
         }
         .btn {
             background-color: #2a2a2a;
             color: #fff;
             border: 1px solid #3d3d3d;
-            padding: 6px 12px;
+            padding: 5px 10px;
             border-radius: 5px;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s;
@@ -98,9 +129,11 @@
             justify-content: center;
             gap: 4px;
             white-space: nowrap;
+            touch-action: manipulation;
+            min-height: 32px;
         }
-        .btn:active:not(:disabled) { transform: scale(0.96); }
-        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn:active:not(:disabled) { transform: scale(0.95); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
         .btn-primary {
             background-color: #107c41;
             border-color: #107c41;
@@ -108,69 +141,151 @@
             font-weight: 600;
         }
         .btn-primary:active:not(:disabled) { background-color: #0b5e31; }
+        .btn-primary:disabled { background-color: #1a4a2e; border-color: #1a4a2e; }
+
         .checkbox-label, .select-label {
             display: flex;
             align-items: center;
-            gap: 4px;
-            font-size: 0.78rem;
+            gap: 3px;
+            font-size: 0.72rem;
             cursor: pointer;
             color: #ccc;
             white-space: nowrap;
         }
-        .checkbox-label input[type="checkbox"] {
-            width: 14px;
-            height: 14px;
-            accent-color: #00d26a;
-            cursor: pointer;
-        }
+        .checkbox-label input[type="checkbox"] { width: 14px; height: 14px; accent-color: #00d26a; cursor: pointer; flex-shrink: 0; }
         .custom-select {
             background-color: #2a2a2a;
             color: #fff;
             border: 1px solid #3d3d3d;
-            padding: 4px 8px;
+            padding: 3px 6px;
             border-radius: 4px;
-            font-size: 0.78rem;
+            font-size: 0.72rem;
             outline: none;
             cursor: pointer;
+            min-height: 28px;
         }
         .spinner {
             border: 3px solid rgba(255,255,255,0.1);
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
             border-left-color: #00d26a;
             animation: spin 1s linear infinite;
             display: inline-block;
+            flex-shrink: 0;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
         #output-canvas { display: none; }
 
+        /* 全螢幕遮罩 */
+        #image-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 99999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 16px;
+            box-sizing: border-box;
+            overflow: auto;
+        }
+        #image-overlay img {
+            max-width: 100%;
+            max-height: 65vh;
+            object-fit: contain;
+            border-radius: 12px;
+            box-shadow: 0 0 40px rgba(0,0,0,0.8);
+            background: #000;
+            touch-action: none;
+        }
+        #image-overlay .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 20px;
+            justify-content: center;
+            width: 100%;
+            max-width: 400px;
+        }
+        #image-overlay .controls button {
+            flex: 1;
+            padding: 12px 20px;
+            font-size: 1rem;
+            border-radius: 30px;
+            border: none;
+            background: #107c41;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            min-width: 120px;
+            touch-action: manipulation;
+        }
+        #image-overlay .controls button.close {
+            background: #555;
+        }
+        #image-overlay .controls button:active { transform: scale(0.95); }
+        #image-overlay p {
+            color: #ddd;
+            font-size: 0.95rem;
+            margin: 12px 0 0;
+            text-align: center;
+            background: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+        #image-overlay .hint {
+            color: #aaa;
+            font-size: 0.8rem;
+            margin-top: 8px;
+        }
+
         @media (max-width: 480px) {
-            header { padding: 6px 10px; }
-            .logo { font-size: 0.85rem; }
-            .btn { font-size: 0.7rem; padding: 4px 8px; }
-            .checkbox-label, .select-label { font-size: 0.7rem; }
-            .custom-select { font-size: 0.7rem; padding: 3px 6px; }
-            footer { padding: 6px 8px; gap: 4px; }
+            header { padding: 4px 8px; min-height: 38px; }
+            .logo { font-size: 0.78rem; }
+            .logo small { font-size: 0.6rem; }
+            .btn { font-size: 0.65rem; padding: 3px 7px; min-height: 28px; }
+            .checkbox-label, .select-label { font-size: 0.65rem; }
+            .custom-select { font-size: 0.65rem; padding: 2px 5px; min-height: 24px; }
+            footer { padding: 4px 6px; gap: 3px; min-height: 40px; }
+            .control-group { gap: 3px; }
+            .status-badge { font-size: 0.6rem; padding: 2px 8px; }
+            #line-warning { font-size: 0.75rem; padding: 6px 10px; }
+            #image-overlay img { max-height: 55vh; }
+            #image-overlay .controls button { font-size: 0.9rem; padding: 10px 14px; }
         }
         @media (min-width: 769px) {
-            .btn { padding: 8px 18px; font-size: 0.95rem; }
-            .checkbox-label, .select-label { font-size: 0.9rem; }
-            .custom-select { font-size: 0.9rem; padding: 6px 12px; }
+            .btn { padding: 7px 16px; font-size: 0.9rem; min-height: 38px; }
+            .checkbox-label, .select-label { font-size: 0.85rem; }
+            .custom-select { font-size: 0.85rem; padding: 5px 10px; min-height: 34px; }
+            footer { padding: 8px 16px; min-height: 56px; }
+        }
+        @media (max-width: 360px) {
+            footer { flex-direction: column; align-items: stretch; gap: 4px; }
+            .control-group { justify-content: center; }
         }
     </style>
 </head>
 <body>
 
+    <!-- LINE 警告 -->
+    <div id="line-warning">
+        <span id="warning-text">⚠️ 偵測到 LINE 瀏覽器，下載可能受限。</span>
+        <span class="switch-mode" onclick="toggleForceMode()">🔄 切換模式</span>
+        <span style="display:inline-block;margin-left:6px;font-size:1.2rem;">📱</span>
+    </div>
+
     <header>
-        <div class="logo">📷 AI 掃描器 (預設全畫面)</div>
-        <div id="status-badge" class="status-badge">載入中...</div>
+        <div class="logo">📷 AI 掃描器 <small>by Dustin</small></div>
+        <div id="status-badge" class="status-badge">載入中…</div>
     </header>
 
     <main>
         <div id="canvas-container">
             <canvas id="main-canvas"></canvas>
-            <div id="placeholder" class="placeholder-text">點下方「📂 開啟照片」</div>
+            <div id="placeholder" class="placeholder-text">點下方 「📂 開啟照片」</div>
         </div>
     </main>
 
@@ -190,7 +305,7 @@
                 <select id="export-format" class="custom-select">
                     <option value="png">PNG</option>
                     <option value="jpg_max">JPG 100%</option>
-                    <option value="jpg_standard">JPG 92%</option>
+                    <option value="jpg_standard" selected>JPG 92%</option>
                 </select>
             </label>
             <button class="btn btn-primary" id="btn-save" onclick="processAndSave()" disabled>✅ 儲存</button>
@@ -199,9 +314,20 @@
 
     <canvas id="output-canvas"></canvas>
 
+    <!-- 全螢幕遮罩 -->
+    <div id="image-overlay">
+        <img id="overlay-img" src="" alt="掃描結果" />
+        <div class="controls">
+            <button id="share-btn" onclick="shareOverlayImage()">📤 分享圖片</button>
+            <button class="close" onclick="closeOverlay()">✕ 關閉</button>
+        </div>
+        <p>📸 點「分享」可儲存至相簿；若無效，請 <b>截圖</b> 儲存</p>
+        <p class="hint">💡 建議使用 Chrome / Safari 瀏覽器以獲得完整下載功能</p>
+    </div>
+
     <script>
         // ============================================================
-        //  核心變數與初始化
+        //  核心變數
         // ============================================================
         let cvReady = false;
         let origImage = null;
@@ -217,16 +343,124 @@
         const ctx = canvas.getContext('2d');
         const placeholder = document.getElementById('placeholder');
         const statusBadge = document.getElementById('status-badge');
+        const lineWarning = document.getElementById('line-warning');
+        const warningText = document.getElementById('warning-text');
 
-        function onOpenCvReady() {
-            cv.onRuntimeInitialized = () => {
-                cvReady = true;
-                statusBadge.textContent = "系統就緒";
-                statusBadge.classList.add("ready");
+        const MAX_IMAGE_SIZE = 2000;
+        let lastProcessedDataURL = null;
+        let forceAndroidLineMode = false; // 手動強制模式
+
+        // ============================================================
+        //  精確裝置偵測 (修正 iPhone / Android 誤判)
+        // ============================================================
+        function detectBrowser() {
+            const ua = navigator.userAgent || '';
+            
+            // 1. 先判斷是否為 iOS 裝置 (iPhone / iPad / iPod)
+            const isIOS = /iPad|iPhone|iPod/.test(ua);
+            // 2. 判斷是否為 Android 裝置
+            const isAndroid = /Android/.test(ua);
+            // 3. 處理 iPad 桌面版模式 (可能不包含 iPhone/iPod，但 touch 支援)
+            const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
+            // 真正的 iPhone (排除 iPad 桌面版)
+            const isIPhone = /iPhone/.test(ua) && !isIPadDesktop;
+            // 真正的 Android (排除 Windows 等)
+            const isAndroidDevice = isAndroid && !/Windows/.test(ua);
+
+            // 檢查 LINE
+            const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
+            
+            // 精確判斷 Android LINE 與 iPhone LINE
+            const isAndroidLine = isAndroidDevice && isLine;
+            const isIPhoneLine = isIPhone && isLine;
+
+            // 顯示警告資訊
+            let warningMsg = '';
+            if (isLine) {
+                lineWarning.style.display = 'block';
+                if (isAndroidLine) {
+                    warningMsg = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
+                    statusBadge.textContent = '⚠️ Android LINE';
+                    statusBadge.style.backgroundColor = '#6b2a1a';
+                    statusBadge.style.color = '#ff9966';
+                } else if (isIPhoneLine) {
+                    warningMsg = '⚠️ 偵測到 iPhone LINE 瀏覽器，建議使用「分享」或「以 Safari 開啟」以獲得最佳體驗。';
+                    statusBadge.textContent = '⚠️ iPhone LINE';
+                    statusBadge.style.backgroundColor = '#6b2a1a';
+                    statusBadge.style.color = '#ff9966';
+                } else {
+                    warningMsg = '⚠️ 偵測到 LINE 瀏覽器（非 Android/iPhone），下載可能受限。建議點右上角「⋯」→「以瀏覽器開啟」。';
+                    statusBadge.textContent = '⚠️ LINE 瀏覽器';
+                    statusBadge.style.backgroundColor = '#6b2a1a';
+                    statusBadge.style.color = '#ff9966';
+                }
+            }
+            if (warningMsg) warningText.textContent = warningMsg;
+
+            return {
+                isLine,
+                isAndroid: isAndroidDevice,
+                isIOS,
+                isIPhone,
+                isAndroidLine,
+                isIPhoneLine,
+                isIPadDesktop
             };
         }
 
-        // ---- 檔案載入 ----
+        // 手動切換模式（讓用戶可覆蓋）
+        function toggleForceMode() {
+            forceAndroidLineMode = !forceAndroidLineMode;
+            const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
+            alert(msg);
+            // 重新整理狀態
+            const info = detectBrowser();
+            if (forceAndroidLineMode) {
+                statusBadge.textContent = '🔧 遮罩強制';
+                statusBadge.style.backgroundColor = '#6b2a1a';
+                statusBadge.style.color = '#ff9966';
+                warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
+            } else {
+                // 重新套用自動偵測結果
+                if (!info.isLine) {
+                    statusBadge.textContent = '系統就緒';
+                    statusBadge.classList.add('ready');
+                    lineWarning.style.display = 'none';
+                } else {
+                    // 重新執行偵測顯示警告
+                    detectBrowser();
+                }
+            }
+        }
+
+        let browserInfo = detectBrowser();
+
+        // 是否使用 Android LINE 遮罩模式（自動判定或手動強制）
+        function useAndroidLineMode() {
+            if (forceAndroidLineMode) return true;
+            return browserInfo.isAndroidLine;
+        }
+
+        // ============================================================
+        //  OpenCV 初始化
+        // ============================================================
+        function onOpenCvReady() {
+            cv.onRuntimeInitialized = () => {
+                cvReady = true;
+                if (!browserInfo.isLine && !forceAndroidLineMode) {
+                    statusBadge.textContent = '系統就緒';
+                    statusBadge.classList.add('ready');
+                } else if (useAndroidLineMode()) {
+                    statusBadge.textContent = '⚠️ 遮罩模式';
+                } else {
+                    statusBadge.textContent = '⚠️ 請用瀏覽器開啟';
+                }
+            };
+        }
+
+        // ============================================================
+        //  檔案載入（自動縮圖）
+        // ============================================================
         function handleFileSelect(e) {
             const file = e.target.files[0];
             if (!file) return;
@@ -234,38 +468,56 @@
             reader.onload = function(ev) {
                 const img = new Image();
                 img.onload = function() {
-                    origImage = img;
-                    let tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = img.width;
-                    tempCanvas.height = img.height;
-                    let tempCtx = tempCanvas.getContext('2d');
-                    tempCtx.drawImage(img, 0, 0);
-                    if (imgMat) imgMat.delete();
-                    if (cvReady) {
-                        imgMat = cv.imread(tempCanvas);
+                    let w = img.width, h = img.height;
+                    let scale = 1;
+                    if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
+                        scale = Math.min(MAX_IMAGE_SIZE / w, MAX_IMAGE_SIZE / h);
                     }
-                    fitCanvasToWindow();
-                    placeholder.style.display = 'none';
-                    document.getElementById('btn-auto').disabled = false;
-                    document.getElementById('btn-reset').disabled = false;
-                    document.getElementById('btn-save').disabled = false;
+                    const newW = Math.round(w * scale);
+                    const newH = Math.round(h * scale);
 
-                    // ★ 先強制設定為全畫面，確保點清楚可見
-                    resetToFull();
-                    // 再嘗試自動偵測（若成功則覆蓋，失敗則保留全畫面）
-                    autoDetect();
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = newW;
+                    tempCanvas.height = newH;
+                    const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(img, 0, 0, newW, newH);
+
+                    const scaledImg = new Image();
+                    scaledImg.onload = function() {
+                        origImage = scaledImg;
+                        if (imgMat) imgMat.delete();
+                        if (cvReady) {
+                            const tempCanvas2 = document.createElement('canvas');
+                            tempCanvas2.width = newW;
+                            tempCanvas2.height = newH;
+                            const ctx2 = tempCanvas2.getContext('2d');
+                            ctx2.drawImage(scaledImg, 0, 0);
+                            imgMat = cv.imread(tempCanvas2);
+                        }
+                        fitCanvasToWindow();
+                        placeholder.style.display = 'none';
+                        document.getElementById('btn-auto').disabled = false;
+                        document.getElementById('btn-reset').disabled = false;
+                        document.getElementById('btn-save').disabled = false;
+                        resetToFull();
+                        autoDetect();
+                    };
+                    scaledImg.src = tempCanvas.toDataURL('image/png');
                 };
                 img.src = ev.target.result;
             };
             reader.readAsDataURL(file);
         }
 
-        // ---- 圖片自動放大填滿容器 ----
+        // ============================================================
+        //  自適應畫布
+        // ============================================================
         function fitCanvasToWindow() {
             if (!origImage) return;
             const container = document.getElementById('canvas-container');
-            const maxW = container.clientWidth - 4;
-            const maxH = container.clientHeight - 4;
+            const rect = container.getBoundingClientRect();
+            const maxW = rect.width - 4;
+            const maxH = rect.height - 4;
             if (maxW < 10 || maxH < 10) return;
 
             let w = origImage.width, h = origImage.height;
@@ -274,11 +526,11 @@
             displayHeight = Math.round(h * scale);
             canvas.width = displayWidth;
             canvas.height = displayHeight;
+            canvas.style.width = displayWidth + 'px';
+            canvas.style.height = displayHeight + 'px';
             scaleRatio = origImage.width / displayWidth;
 
-            // 若已經有四個點，按比例調整位置，避免跑出邊界
             if (points.length === 4) {
-                // 計算舊尺寸（若無則用當前顯示尺寸）
                 const oldW = canvas.width || displayWidth;
                 const oldH = canvas.height || displayHeight;
                 if (oldW > 0 && oldH > 0) {
@@ -289,24 +541,34 @@
                         y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
                     }));
                 } else {
-                    // 若無舊尺寸，直接重置為全畫面
                     resetToFull();
                 }
             }
             redraw();
         }
 
+        let resizeTimer = null;
+        const ro = new ResizeObserver(() => {
+            if (origImage) {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(fitCanvasToWindow, 50);
+            }
+        });
+        ro.observe(document.getElementById('canvas-container'));
         window.addEventListener('resize', () => {
-            if (origImage) fitCanvasToWindow();
+            if (origImage) {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(fitCanvasToWindow, 50);
+            }
         });
 
         // ============================================================
-        //  拖曳控制 (穩定版，阻止滾動)
+        //  拖曳控制
         // ============================================================
         function getCanvasCoords(e) {
             const rect = canvas.getBoundingClientRect();
-            const clientX = e.clientX || e.touches[0].clientX;
-            const clientY = e.clientY || e.touches[0].clientY;
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
             return {
@@ -335,8 +597,8 @@
             if (!isDragging || selectedIdx < 0) return;
             e.preventDefault();
             const pos = getCanvasCoords(e);
-            const x = Math.max(2, Math.min(displayWidth-2, pos.x));
-            const y = Math.max(2, Math.min(displayHeight-2, pos.y));
+            const x = Math.max(2, Math.min(displayWidth - 2, pos.x));
+            const y = Math.max(2, Math.min(displayHeight - 2, pos.y));
             points[selectedIdx] = { x, y };
             redraw();
         }
@@ -351,12 +613,10 @@
         canvas.addEventListener('mousedown', handleStart);
         window.addEventListener('mousemove', (e) => { if (isDragging) handleMove(e); });
         window.addEventListener('mouseup', handleEnd);
-
         canvas.addEventListener('touchstart', handleStart, { passive: false });
         window.addEventListener('touchmove', (e) => { if (isDragging) handleMove(e); }, { passive: false });
         window.addEventListener('touchend', handleEnd);
 
-        // ---- 排序點 (確保順序正確) ----
         function sortPoints(pts) {
             let sums = pts.map(p => p.x + p.y);
             let diffs = pts.map(p => p.y - p.x);
@@ -368,20 +628,17 @@
         }
 
         // ============================================================
-        //  ★★★ 強化自動偵測 (Otsu + 面積過濾) ★★★
+        //  自動偵測
         // ============================================================
         function autoDetect() {
             if (!cvReady || !imgMat) { resetToFull(); return; }
             try {
                 let gray = new cv.Mat();
                 cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
-
                 let blurred = new cv.Mat();
-                cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-
+                cv.GaussianBlur(gray, blurred, new cv.Size(5,5), 0);
                 let thresh = new cv.Mat();
                 cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
                 let contours = new cv.MatVector();
                 let hierarchy = new cv.Mat();
                 cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -410,7 +667,7 @@
                     cnt.delete();
                 }
 
-                if (bestApprox && maxArea > totalArea * 0.05) { // 至少佔畫面5%才視為有效
+                if (bestApprox && maxArea > totalArea * 0.05) {
                     let detected = [];
                     for (let i = 0; i < 4; i++) {
                         detected.push({
@@ -421,15 +678,12 @@
                     points = sortPoints(detected);
                     bestApprox.delete();
                 } else {
-                    // 若偵測不到或面積太小，保持全畫面
                     if (bestApprox) bestApprox.delete();
                     resetToFull();
                 }
-
                 gray.delete(); blurred.delete(); thresh.delete();
                 contours.delete(); hierarchy.delete();
-
-            } catch(err) {
+            } catch (err) {
                 console.warn("Auto detect error, keeping full view", err);
                 resetToFull();
             }
@@ -439,7 +693,6 @@
         function resetToFull() {
             const margin = 20;
             if (displayWidth < 40 || displayHeight < 40) {
-                // 若畫面太小，設為0邊距
                 points = [
                     { x: 0, y: 0 },
                     { x: displayWidth || 100, y: 0 },
@@ -473,7 +726,6 @@
                 ctx.strokeStyle = '#00ff66';
                 ctx.lineWidth = 2;
                 ctx.stroke();
-
                 points.forEach(p => {
                     ctx.beginPath();
                     ctx.arc(p.x, p.y, 10, 0, 2*Math.PI);
@@ -486,7 +738,7 @@
             }
         }
 
-        // ---- 彩色濾鏡 ----
+        // ---- 彩色濾鏡 (返回 RGBA) ----
         function applyColorPerfectFilter(srcMat) {
             let rgbMat = new cv.Mat();
             cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
@@ -505,12 +757,14 @@
             cv.cvtColor(hsv, enhanced, cv.COLOR_HSV2RGB);
             let finalResult = new cv.Mat();
             enhanced.convertTo(finalResult, -1, 1.1, -10);
+            let rgba = new cv.Mat();
+            cv.cvtColor(finalResult, rgba, cv.COLOR_RGB2RGBA);
             rgbMat.delete(); smooth.delete(); hsv.delete();
-            channels.delete(); s.delete(); v.delete(); enhanced.delete();
-            return finalResult;
+            channels.delete(); s.delete(); v.delete(); enhanced.delete(); finalResult.delete();
+            return rgba;
         }
 
-        // ---- 判斷行動裝置 ----
+        // ---- 判斷行動裝置 (一般用途) ----
         function isMobileDevice() {
             const ua = navigator.userAgent || navigator.vendor || window.opera;
             if (/iPhone|iPad|iPod|Android|BlackBerry|Windows Phone|Opera Mini|IEMobile/i.test(ua)) return true;
@@ -519,13 +773,141 @@
         }
 
         // ============================================================
-        //  ★★★ 儲存邏輯 (強制排序，避免翻轉) ★★★
+        //  ★★★ 全螢幕遮罩顯示 ★★★
+        // ============================================================
+        function showImageOverlay(dataUrl) {
+            lastProcessedDataURL = dataUrl;
+            const overlay = document.getElementById('image-overlay');
+            const img = document.getElementById('overlay-img');
+            img.src = dataUrl;
+            overlay.style.display = 'flex';
+        }
+
+        function closeOverlay() {
+            document.getElementById('image-overlay').style.display = 'none';
+        }
+
+        function shareOverlayImage() {
+            if (!lastProcessedDataURL) {
+                alert('請先產生圖片');
+                return;
+            }
+            fetch(lastProcessedDataURL)
+                .then(res => res.blob())
+                .then(blob => {
+                    const file = new File([blob], 'scanned_image.png', { type: 'image/png' });
+                    if (navigator.share && navigator.canShare) {
+                        navigator.share({
+                            files: [file],
+                            title: '掃描結果'
+                        }).catch(err => {
+                            if (err.name !== 'AbortError') {
+                                alert('分享失敗，請使用截圖儲存。');
+                            }
+                        });
+                    } else {
+                        alert('您的瀏覽器不支援分享功能，請使用截圖儲存。');
+                    }
+                })
+                .catch(() => {
+                    alert('無法處理圖片，請使用截圖儲存。');
+                });
+        }
+
+        // ============================================================
+        //  ★★★ 儲存邏輯（根據模式選擇） ★★★
         // ============================================================
         function processAndSave() {
-            if (!origImage || points.length !== 4) return;
+            if (!origImage || points.length !== 4) {
+                alert('請先載入圖片並框選區域');
+                return;
+            }
+
+            // 若為 Android LINE 模式（自動或手動強制），使用遮罩
+            if (useAndroidLineMode()) {
+                const saveBtn = document.getElementById('btn-save');
+                saveBtn.disabled = true;
+                saveBtn.innerHTML = '<span class="spinner"></span> 準備中…';
+
+                setTimeout(() => {
+                    try {
+                        const sortedPts = sortPoints(points);
+                        const origPts = sortedPts.map(p => ({
+                            x: p.x * scaleRatio,
+                            y: p.y * scaleRatio
+                        }));
+
+                        let w1 = Math.hypot(origPts[1].x - origPts[0].x, origPts[1].y - origPts[0].y);
+                        let w2 = Math.hypot(origPts[2].x - origPts[3].x, origPts[2].y - origPts[3].y);
+                        let maxW = Math.max(Math.round(w1), Math.round(w2));
+                        let h1 = Math.hypot(origPts[1].x - origPts[2].x, origPts[1].y - origPts[2].y);
+                        let h2 = Math.hypot(origPts[0].x - origPts[3].x, origPts[0].y - origPts[3].y);
+                        let maxH = Math.max(Math.round(h1), Math.round(h2));
+
+                        const MAX_OUTPUT = 2000;
+                        if (maxW > MAX_OUTPUT || maxH > MAX_OUTPUT) {
+                            const scaleOut = Math.min(MAX_OUTPUT / maxW, MAX_OUTPUT / maxH);
+                            maxW = Math.round(maxW * scaleOut);
+                            maxH = Math.round(maxH * scaleOut);
+                        }
+                        if (maxW < 10) maxW = 100;
+                        if (maxH < 10) maxH = 100;
+
+                        let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                            origPts[0].x, origPts[0].y,
+                            origPts[1].x, origPts[1].y,
+                            origPts[2].x, origPts[2].y,
+                            origPts[3].x, origPts[3].y
+                        ]);
+                        let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                            0, 0,
+                            maxW - 1, 0,
+                            maxW - 1, maxH - 1,
+                            0, maxH - 1
+                        ]);
+                        let M = cv.getPerspectiveTransform(srcTri, dstTri);
+                        let warped = new cv.Mat();
+                        let dsize = new cv.Size(maxW, maxH);
+                        cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, new cv.Scalar());
+
+                        const applyFilter = document.getElementById('filter-check').checked;
+                        let finalMat;
+                        if (applyFilter) {
+                            finalMat = applyColorPerfectFilter(warped);
+                            warped.delete();
+                        } else {
+                            finalMat = warped;
+                        }
+
+                        const outCanvas = document.getElementById('output-canvas');
+                        outCanvas.width = maxW;
+                        outCanvas.height = maxH;
+                        cv.imshow(outCanvas, finalMat);
+
+                        srcTri.delete(); dstTri.delete(); M.delete();
+
+                        const dataUrl = outCanvas.toDataURL('image/png');
+                        finalMat.delete();
+
+                        showImageOverlay(dataUrl);
+
+                        saveBtn.disabled = false;
+                        saveBtn.innerHTML = '✅ 儲存';
+
+                    } catch (err) {
+                        console.error(err);
+                        alert('處理失敗，請重試。若持續失敗，請關閉「優化」功能。');
+                        saveBtn.disabled = false;
+                        saveBtn.innerHTML = '✅ 儲存';
+                    }
+                }, 80);
+                return;
+            }
+
+            // ---- 一般模式（包含 iPhone LINE、Safari、Chrome 等） ----
             const saveBtn = document.getElementById('btn-save');
             saveBtn.disabled = true;
-            saveBtn.innerHTML = '<span class="spinner"></span> 處理中...';
+            saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
 
             setTimeout(() => {
                 try {
@@ -541,6 +923,15 @@
                     let h1 = Math.hypot(origPts[1].x - origPts[2].x, origPts[1].y - origPts[2].y);
                     let h2 = Math.hypot(origPts[0].x - origPts[3].x, origPts[0].y - origPts[3].y);
                     let maxH = Math.max(Math.round(h1), Math.round(h2));
+
+                    const MAX_OUTPUT = 2000;
+                    if (maxW > MAX_OUTPUT || maxH > MAX_OUTPUT) {
+                        const scaleOut = Math.min(MAX_OUTPUT / maxW, MAX_OUTPUT / maxH);
+                        maxW = Math.round(maxW * scaleOut);
+                        maxH = Math.round(maxH * scaleOut);
+                    }
+                    if (maxW < 10) maxW = 100;
+                    if (maxH < 10) maxH = 100;
 
                     let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
                         origPts[0].x, origPts[0].y,
@@ -560,10 +951,12 @@
                     cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_LANCZOS4, cv.BORDER_CONSTANT, new cv.Scalar());
 
                     const applyFilter = document.getElementById('filter-check').checked;
-                    let finalMat = warped;
+                    let finalMat;
                     if (applyFilter) {
                         finalMat = applyColorPerfectFilter(warped);
                         warped.delete();
+                    } else {
+                        finalMat = warped;
                     }
 
                     const outCanvas = document.getElementById('output-canvas');
@@ -571,7 +964,7 @@
                     outCanvas.height = maxH;
                     cv.imshow(outCanvas, finalMat);
 
-                    srcTri.delete(); dstTri.delete(); M.delete(); finalMat.delete();
+                    srcTri.delete(); dstTri.delete(); M.delete();
 
                     const formatChoice = document.getElementById('export-format').value;
                     let mimeType, fileName, quality;
@@ -590,44 +983,96 @@
                     }
 
                     outCanvas.toBlob(function(blob) {
-                        if (!blob) { alert('產生圖片失敗'); saveBtn.disabled = false; saveBtn.innerHTML = '✅ 儲存'; return; }
+                        if (!blob) {
+                            // 若 blob 失敗，改為遮罩顯示
+                            const dataUrl = outCanvas.toDataURL('image/png');
+                            showImageOverlay(dataUrl);
+                            finalMat.delete();
+                            saveBtn.disabled = false;
+                            saveBtn.innerHTML = '✅ 儲存';
+                            return;
+                        }
 
                         const mobile = isMobileDevice();
+
+                        // 1. 嘗試系統分享
                         if (mobile && navigator.share && navigator.canShare) {
                             const file = new File([blob], fileName, { type: mimeType });
                             const shareData = { files: [file], title: '掃描結果' };
                             if (navigator.canShare(shareData)) {
                                 navigator.share(shareData)
-                                    .catch(err => { if (err.name !== 'AbortError') fallbackDownload(blob, fileName); })
-                                    .finally(() => { saveBtn.disabled = false; saveBtn.innerHTML = '✅ 儲存'; });
+                                    .then(() => {
+                                        saveBtn.disabled = false;
+                                        saveBtn.innerHTML = '✅ 儲存';
+                                        finalMat.delete();
+                                    })
+                                    .catch((err) => {
+                                        if (err.name !== 'AbortError') {
+                                            // 分享失敗，轉為遮罩顯示
+                                            const dataUrl = outCanvas.toDataURL('image/png');
+                                            showImageOverlay(dataUrl);
+                                        }
+                                        saveBtn.disabled = false;
+                                        saveBtn.innerHTML = '✅ 儲存';
+                                        finalMat.delete();
+                                    });
                                 return;
                             }
                         }
-                        fallbackDownload(blob, fileName);
+
+                        // 2. 傳統下載
+                        try {
+                            const link = document.createElement('a');
+                            link.download = fileName;
+                            link.href = URL.createObjectURL(blob);
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                            setTimeout(() => URL.revokeObjectURL(link.href), 8000);
+                            saveBtn.disabled = false;
+                            saveBtn.innerHTML = '✅ 儲存';
+                            finalMat.delete();
+                            return;
+                        } catch (e) {
+                            console.warn('Download failed', e);
+                        }
+
+                        // 3. 最終王牌：遮罩顯示
+                        const dataUrl = outCanvas.toDataURL('image/png');
+                        showImageOverlay(dataUrl);
                         saveBtn.disabled = false;
                         saveBtn.innerHTML = '✅ 儲存';
+                        finalMat.delete();
+
                     }, mimeType, quality);
 
-                } catch(e) {
-                    alert('處理失敗，請再試');
+                } catch (err) {
+                    console.error(err);
+                    alert('處理失敗，請重試。');
                     saveBtn.disabled = false;
                     saveBtn.innerHTML = '✅ 儲存';
                 }
-            }, 50);
+            }, 80);
         }
 
-        function fallbackDownload(blob, fileName) {
-            const link = document.createElement('a');
-            link.download = fileName;
-            link.href = URL.createObjectURL(blob);
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            setTimeout(() => URL.revokeObjectURL(link.href), 5000);
-        }
-
-        // 初始化 (無圖片時顯示提示)
+        // ---- 初始化 ----
         resetToFull();
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (browserInfo.isLine || forceAndroidLineMode) {
+                lineWarning.style.display = 'block';
+            }
+        });
+
+        window.onOpenCvReady = onOpenCvReady;
+        window.handleFileSelect = handleFileSelect;
+        window.autoDetect = autoDetect;
+        window.resetToFull = resetToFull;
+        window.redraw = redraw;
+        window.processAndSave = processAndSave;
+        window.shareOverlayImage = shareOverlayImage;
+        window.closeOverlay = closeOverlay;
+        window.toggleForceMode = toggleForceMode;
     </script>
 </body>
 </html>
