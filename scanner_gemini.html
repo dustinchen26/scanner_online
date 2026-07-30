@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 彩色掃描器 (極致高畫質 Web版)</title>
+    <!-- Async OpenCV.js -->
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();" type="text/javascript"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* Header / Top Bar */
+        header {
+            background-color: #1e1e1e;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2d2d2d;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            flex-shrink: 0;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #00d26a;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-badge {
+            font-size: 0.85rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            background-color: #333;
+            color: #aaa;
+        }
+
+        .status-badge.ready {
+            background-color: #1b3bbb;
+            color: #8bb2ff;
+        }
+
+        /* Main Workspace */
+        main {
+            flex: 1;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #0a0a0a;
+            padding: 15px;
+            min-height: 300px;
+        }
+
+        #canvas-container {
+            position: relative;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.8);
+            border-radius: 8px;
+            overflow: hidden;
+            background: #181818;
+            max-width: 100%;
+            max-height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            cursor: crosshair;
+            /* 關鍵：防止手機拖曳錨點時觸發整頁滑動 */
+            touch-action: none; 
+        }
+
+        .placeholder-text {
+            position: absolute;
+            color: #666;
+            font-size: 1.1rem;
+            text-align: center;
+            pointer-events: none;
+            padding: 0 20px;
+        }
+
+        /* Bottom Controls Toolbar */
+        footer {
+            background-color: #1e1e1e;
+            padding: 14px 24px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid #2d2d2d;
+            flex-shrink: 0;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            background-color: #2a2a2a;
+            color: #fff;
+            border: 1px solid #3d3d3d;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn:hover:not(:disabled) {
+            background-color: #3a3a3a;
+            border-color: #555;
+        }
+
+        .btn:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background-color: #107c41;
+            border-color: #107c41;
+            color: white;
+            font-weight: 600;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background-color: #0b5e31;
+            border-color: #0b5e31;
+        }
+
+        .checkbox-label, .select-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            user-select: none;
+            color: #ccc;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: #00d26a;
+            cursor: pointer;
+        }
+
+        .custom-select {
+            background-color: #2a2a2a;
+            color: #fff;
+            border: 1px solid #3d3d3d;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.88rem;
+            outline: none;
+            cursor: pointer;
+        }
+
+        /* Spinner Loader */
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.1);
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            border-left-color: #00d26a;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Hidden output canvas for download processing */
+        #output-canvas {
+            display: none;
+        }
+
+        /* 手機版響應式優化 RWD */
+        @media (max-width: 768px) {
+            header {
+                padding: 10px 16px;
+            }
+            .logo {
+                font-size: 1rem;
+            }
+            footer {
+                padding: 12px 16px;
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .control-group {
+                width: 100%;
+                justify-content: space-between;
+            }
+            .btn {
+                flex: 1;
+            }
+            .btn-primary {
+                width: 100%;
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4a2 2 0 0 1 2-2h3"/><path d="M15 2h3a2 2 0 0 1 2 2v3"/><path d="M20 17v3a2 2 0 0 1-2 2h-3"/><path d="M9 22H6a2 2 0 0 1-2-2v-3"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+            AI 彩色文件掃描器 (高畫質版)
+        </div>
+        <div id="status-badge" class="status-badge">載入 OpenCV 中...</div>
+    </header>
+
+    <main>
+        <div id="canvas-container">
+            <canvas id="main-canvas"></canvas>
+            <div id="placeholder" class="placeholder-text">
+                請點擊下方「📂 開啟照片」進行掃描與校正
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="control-group">
+            <input type="file" id="file-input" accept="image/*" style="display:none;" onchange="handleFileSelect(event)">
+            <button class="btn" onclick="document.getElementById('file-input').click()">📂 開啟照片</button>
+            <button class="btn" id="btn-auto" onclick="autoDetect()" disabled>🔍 自動偵測</button>
+            <button class="btn" id="btn-reset" onclick="resetToFull()" disabled>🔄 全畫面</button>
+        </div>
+
+        <div class="control-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="filter-check" onchange="redraw()">
+                套用彩色優化
+            </label>
+            <label class="select-label">
+                格式:
+                <select id="export-format" class="custom-select">
+                    <option value="png">PNG (無損最高畫質)</option>
+                    <option value="jpg_max">JPG (100% 品質)</option>
+                    <option value="jpg_standard">JPG (92% 標準)</option>
+                </select>
+            </label>
+        </div>
+
+        <div class="control-group">
+            <button class="btn btn-primary" id="btn-save" onclick="processAndSave()" disabled>✅ 轉正並下載</button>
+        </div>
+    </footer>
+
+    <canvas id="output-canvas"></canvas>
+
+    <script>
+        let cvReady = false;
+        let origImage = null; // HTMLImageElement
+        let imgMat = null;    // cv.Mat of original image
+        let displayWidth = 0;
+        let displayHeight = 0;
+        let scaleRatio = 1.0; // original size / display size
+
+        // Control points on display canvas coords
+        let points = []; 
+        let selectedPointIdx = null;
+
+        const canvas = document.getElementById('main-canvas');
+        const ctx = canvas.getContext('2d');
+        const placeholder = document.getElementById('placeholder');
+        const statusBadge = document.getElementById('status-badge');
+
+        function onOpenCvReady() {
+            cv.onRuntimeInitialized = () => {
+                cvReady = true;
+                statusBadge.textContent = "系統就緒";
+                statusBadge.classList.add("ready");
+            };
+        }
+
+        // Handle Image Upload
+        function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    origImage = img;
+                    
+                    let tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = img.width;
+                    tempCanvas.height = img.height;
+                    let tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(img, 0, 0);
+                    
+                    if (imgMat) imgMat.delete();
+                    if (cvReady) {
+                        imgMat = cv.imread(tempCanvas);
+                    }
+                    
+                    fitCanvasToWindow();
+                    placeholder.style.display = 'none';
+                    
+                    document.getElementById('btn-auto').disabled = false;
+                    document.getElementById('btn-reset').disabled = false;
+                    document.getElementById('btn-save').disabled = false;
+
+                    autoDetect();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Adjust Canvas visual size to fit screen
+        function fitCanvasToWindow() {
+            if (!origImage) return;
+
+            // 計算可用區域大小
+            const mainEl = document.querySelector('main');
+            const maxW = mainEl.clientWidth - 30;
+            const maxH = mainEl.clientHeight - 30;
+
+            let w = origImage.width;
+            let h = origImage.height;
+
+            const scale = Math.min(maxW / w, maxH / h, 1.0);
+            
+            displayWidth = Math.round(w * scale);
+            displayHeight = Math.round(h * scale);
+            
+            canvas.width = displayWidth;
+            canvas.height = displayHeight;
+
+            scaleRatio = origImage.width / displayWidth;
+            redraw();
+        }
+
+        window.addEventListener('resize', () => {
+            if (origImage) {
+                const oldRatio = scaleRatio;
+                fitCanvasToWindow();
+                if (points.length === 4 && oldRatio > 0) {
+                    const adjustment = oldRatio / scaleRatio;
+                    points = points.map(p => ({
+                        x: p.x * adjustment,
+                        y: p.y * adjustment
+                    }));
+                    redraw();
+                }
+            }
+        });
+
+        // 統一使用 Pointer Events 處理電腦與手機操控
+        canvas.addEventListener('pointerdown', (e) => {
+            if (!points.length) return;
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            // 手機判定範圍設為 35px，比較容易按到
+            const touchRadius = e.pointerType === 'touch' ? 35 : 25;
+
+            for (let i = 0; i < points.length; i++) {
+                const dist = Math.hypot(points[i].x - clickX, points[i].y - clickY);
+                if (dist < touchRadius) {
+                    selectedPointIdx = i;
+                    canvas.setPointerCapture(e.pointerId);
+                    e.preventDefault();
+                    break;
+                }
+            }
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (selectedPointIdx !== null) {
+                const rect = canvas.getBoundingClientRect();
+                let x = Math.max(0, Math.min(displayWidth, e.clientX - rect.left));
+                let y = Math.max(0, Math.min(displayHeight, e.clientY - rect.top));
+                points[selectedPointIdx] = { x, y };
+                redraw();
+                e.preventDefault();
+            }
+        });
+
+        const stopDragging = (e) => {
+            if (selectedPointIdx !== null) {
+                try { canvas.releasePointerCapture(e.pointerId); } catch(err){}
+                selectedPointIdx = null;
+            }
+        };
+
+        canvas.addEventListener('pointerup', stopDragging);
+        canvas.addEventListener('pointercancel', stopDragging);
+
+        // Auto Detection logic using OpenCV.js
+        function autoDetect() {
+            if (!cvReady || !imgMat) {
+                resetToFull();
+                return;
+            }
+
+            try {
+                let gray = new cv.Mat();
+                cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
+
+                let edges = new cv.Mat();
+                cv.Canny(gray, edges, 30, 100);
+
+                let contours = new cv.MatVector();
+                let hierarchy = new cv.Mat();
+                cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                let maxArea = 0;
+                let bestApprox = null;
+
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    let area = cv.contourArea(cnt);
+                    let peri = cv.arcLength(cnt, true);
+                    let approx = new cv.Mat();
+                    cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+
+                    if (approx.rows === 4 && area > maxArea) {
+                        maxArea = area;
+                        if (bestApprox) bestApprox.delete();
+                        bestApprox = approx;
+                    } else {
+                        approx.delete();
+                    }
+                    cnt.delete();
+                }
+
+                if (bestApprox) {
+                    let detectedPts = [];
+                    for (let i = 0; i < 4; i++) {
+                        detectedPts.push({
+                            x: bestApprox.data32S[i * 2] / scaleRatio,
+                            y: bestApprox.data32S[i * 2 + 1] / scaleRatio
+                        });
+                    }
+                    points = sortPoints(detectedPts);
+                    bestApprox.delete();
+                } else {
+                    resetToFull();
+                }
+
+                gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+            } catch (err) {
+                console.warn("Auto detect failed, falling back to full view:", err);
+                resetToFull();
+            }
+            redraw();
+        }
+
+        // Sort 4 points in Top-Left, Top-Right, Bottom-Right, Bottom-Left order
+        function sortPoints(pts) {
+            let sums = pts.map(p => p.x + p.y);
+            let diffs = pts.map(p => p.y - p.x);
+
+            let topLeft = pts[sums.indexOf(Math.min(...sums))];
+            let bottomRight = pts[sums.indexOf(Math.max(...sums))];
+            let topRight = pts[diffs.indexOf(Math.min(...diffs))];
+            let bottomLeft = pts[diffs.indexOf(Math.max(...diffs))];
+
+            return [topLeft, topRight, bottomRight, bottomLeft];
+        }
+
+        function resetToFull() {
+            const margin = 20;
+            points = [
+                { x: margin, y: margin },
+                { x: displayWidth - margin, y: margin },
+                { x: displayWidth - margin, y: displayHeight - margin },
+                { x: margin, y: displayHeight - margin }
+            ];
+            redraw();
+        }
+
+        // Render Canvas
+        function redraw() {
+            if (!origImage) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(origImage, 0, 0, displayWidth, displayHeight);
+
+            if (points.length === 4) {
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+                ctx.lineTo(points[1].x, points[1].y);
+                ctx.lineTo(points[2].x, points[2].y);
+                ctx.lineTo(points[3].x, points[3].y);
+                ctx.closePath();
+
+                ctx.fillStyle = 'rgba(0, 255, 100, 0.2)';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#00ff66';
+                ctx.stroke();
+
+                // 畫四個控制點 (加大點的尺寸方便手指按壓)
+                points.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#0078d4';
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+                });
+            }
+        }
+
+        // Color enhancement & Perspective Transformation
+        function processAndSave() {
+            if (!origImage || points.length !== 4) return;
+
+            const saveBtn = document.getElementById('btn-save');
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="spinner"></span> 處理中...';
+
+            setTimeout(() => {
+                try {
+                    let origPts = points.map(p => ({
+                        x: p.x * scaleRatio,
+                        y: p.y * scaleRatio
+                    }));
+
+                    let w1 = Math.hypot(origPts[1].x - origPts[0].x, origPts[1].y - origPts[0].y);
+                    let w2 = Math.hypot(origPts[2].x - origPts[3].x, origPts[2].y - origPts[3].y);
+                    let maxWidth = Math.max(Math.round(w1), Math.round(w2));
+
+                    let h1 = Math.hypot(origPts[1].x - origPts[2].x, origPts[1].y - origPts[2].y);
+                    let h2 = Math.hypot(origPts[0].x - origPts[3].x, origPts[0].y - origPts[3].y);
+                    let maxHeight = Math.max(Math.round(h1), Math.round(h2));
+
+                    let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                        origPts[0].x, origPts[0].y,
+                        origPts[1].x, origPts[1].y,
+                        origPts[2].x, origPts[2].y,
+                        origPts[3].x, origPts[3].y
+                    ]);
+
+                    let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                        0, 0,
+                        maxWidth - 1, 0,
+                        maxWidth - 1, maxHeight - 1,
+                        0, maxHeight - 1
+                    ]);
+
+                    let M = cv.getPerspectiveTransform(srcTri, dstTri);
+                    let warped = new cv.Mat();
+                    let dsize = new cv.Size(maxWidth, maxHeight);
+
+                    cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_CUBIC, cv.BORDER_CONSTANT, new cv.Scalar());
+
+                    const applyFilter = document.getElementById('filter-check').checked;
+                    let finalMat = warped;
+
+                    if (applyFilter) {
+                        finalMat = applyColorPerfectFilter(warped);
+                        warped.delete();
+                    }
+
+                    const outCanvas = document.getElementById('output-canvas');
+                    outCanvas.width = maxWidth;
+                    outCanvas.height = maxHeight;
+                    cv.imshow(outCanvas, finalMat);
+
+                    srcTri.delete(); dstTri.delete(); M.delete(); finalMat.delete();
+
+                    const formatChoice = document.getElementById('export-format').value;
+                    const link = document.createElement('a');
+
+                    if (formatChoice === 'png') {
+                        link.download = 'scanner_output_hd.png';
+                        link.href = outCanvas.toDataURL('image/png');
+                    } else if (formatChoice === 'jpg_max') {
+                        link.download = 'scanner_output_100q.jpg';
+                        link.href = outCanvas.toDataURL('image/jpeg', 1.0);
+                    } else {
+                        link.download = 'scanner_output.jpg';
+                        link.href = outCanvas.toDataURL('image/jpeg', 0.92);
+                    }
+
+                    link.click();
+
+                } catch (e) {
+                    console.error("Processing failed:", e);
+                    alert("處理失敗，請再試一次。");
+                } finally {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '✅ 轉正並下載';
+                }
+            }, 50);
+        }
+
+        // Color Filter
+        function applyColorPerfectFilter(srcMat) {
+            let rgbMat = new cv.Mat();
+            cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
+
+            let smooth = new cv.Mat();
+            cv.bilateralFilter(rgbMat, smooth, 9, 75, 75);
+
+            let hsv = new cv.Mat();
+            cv.cvtColor(smooth, hsv, cv.COLOR_RGB2HSV);
+
+            let channels = new cv.MatVector();
+            cv.split(hsv, channels);
+
+            let s = channels.get(1);
+            let v = channels.get(2);
+
+            s.convertTo(s, -1, 1.25, 0);
+            v.convertTo(v, -1, 1.1, 0);
+
+            cv.merge(channels, hsv);
+            let enhanced = new cv.Mat();
+            cv.cvtColor(hsv, enhanced, cv.COLOR_HSV2RGB);
+
+            let finalResult = new cv.Mat();
+            enhanced.convertTo(finalResult, -1, 1.1, -10);
+
+            rgbMat.delete(); smooth.delete(); hsv.delete(); 
+            channels.delete(); s.delete(); v.delete(); enhanced.delete();
+
+            return finalResult;
+        }
+    </script>
+</body>
+</html>
