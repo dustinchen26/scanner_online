@@ -178,7 +178,6 @@
 
         #output-canvas { display: none; }
 
-        /* 全螢幕遮罩（僅 Android LINE 使用） */
         #image-overlay {
             display: none;
             position: fixed;
@@ -269,7 +268,6 @@
     </style>
 </head>
 <body>
-    <!-- LINE 警告（僅 Android LINE 顯示） -->
     <div id="line-warning">
         <span id="warning-text">⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。</span>
         <span class="switch-mode" onclick="toggleForceMode()">🔄 切換模式</span>
@@ -312,7 +310,6 @@
 
     <canvas id="output-canvas"></canvas>
 
-    <!-- 全螢幕遮罩 -->
     <div id="image-overlay">
         <img id="overlay-img" src="" alt="掃描結果" />
         <div class="controls">
@@ -336,7 +333,8 @@
         let points = [];
         let selectedIdx = -1;
         let isDragging = false;
-        let fitting = false; // 避免 fitCanvasToWindow 遞迴
+        let isResizing = false;          // 避免 resize 遞迴
+        let resizeTimeout = null;        // 防抖計時器
 
         const canvas = document.getElementById('main-canvas');
         const ctx = canvas.getContext('2d');
@@ -350,7 +348,7 @@
         let forceAndroidLineMode = false;
 
         // ============================================================
-        //  精確裝置偵測（僅 Android LINE 顯示警告，iPhone LINE 無警告）
+        //  裝置偵測（僅 Android LINE 顯示警告）
         // ============================================================
         function detectBrowser() {
             const ua = navigator.userAgent;
@@ -430,6 +428,10 @@
             reader.onload = function(ev) {
                 const img = new Image();
                 img.onload = function() {
+                    // 修正 EXIF 旋轉（拍照常見）
+                    // 因為我們使用 canvas 繪製，可以順便轉正，但為簡化，先載入
+                    // 若需要旋轉，可使用 exif-js，但此處暫不處理，保留原樣
+                    // 但可先調整縮圖
                     let w = img.width, h = img.height;
                     let scale = 1;
                     if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
@@ -456,7 +458,8 @@
                             ctx2.drawImage(scaledImg, 0, 0);
                             imgMat = cv.imread(tempCanvas2);
                         }
-                        fitCanvasToWindow(true); // 強制重新計算
+                        // 強制重新計算顯示尺寸（加上 force 參數）
+                        fitCanvasToWindow(true);
                         placeholder.style.display = 'none';
                         document.getElementById('btn-auto').disabled = false;
                         document.getElementById('btn-reset').disabled = false;
@@ -472,71 +475,85 @@
         }
 
         // ============================================================
-        //  自適應畫布（穩定版，防止越縮越小）
+        //  自適應畫布（修正無限循環）
         // ============================================================
         function fitCanvasToWindow(force = false) {
             if (!origImage) return;
-            if (fitting && !force) return;
-            fitting = true;
+            // 若正在調整尺寸，則跳過，避免循環
+            if (isResizing && !force) return;
+            isResizing = true;
 
-            const container = document.getElementById('canvas-container');
-            const rect = container.getBoundingClientRect();
-            let maxW = rect.width - 4;
-            let maxH = rect.height - 4;
+            try {
+                const container = document.getElementById('canvas-container');
+                const rect = container.getBoundingClientRect();
+                let maxW = rect.width - 4;
+                let maxH = rect.height - 4;
 
-            // 防呆：若尺寸無效，使用備用值
-            if (maxW < 10 || maxH < 10 || !isFinite(maxW) || !isFinite(maxH)) {
-                maxW = Math.max(200, window.innerWidth * 0.8);
-                maxH = Math.max(200, window.innerHeight * 0.6);
-            }
-
-            let w = origImage.width, h = origImage.height;
-            const scale = Math.min(maxW / w, maxH / h);
-            const newW = Math.round(w * scale);
-            const newH = Math.round(h * scale);
-
-            // 只有尺寸真正變化時才更新
-            if (displayWidth !== newW || displayHeight !== newH) {
-                displayWidth = newW;
-                displayHeight = newH;
-                canvas.width = displayWidth;
-                canvas.height = displayHeight;
-                canvas.style.width = displayWidth + 'px';
-                canvas.style.height = displayHeight + 'px';
-                scaleRatio = origImage.width / displayWidth;
-
-                if (points.length === 4) {
-                    const oldW = canvas.width || displayWidth;
-                    const oldH = canvas.height || displayHeight;
-                    if (oldW > 0 && oldH > 0) {
-                        const sx = displayWidth / oldW;
-                        const sy = displayHeight / oldH;
-                        points = points.map(p => ({
-                            x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
-                            y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
-                        }));
-                    } else {
-                        resetToFull();
-                    }
+                if (maxW < 10 || maxH < 10 || !isFinite(maxW) || !isFinite(maxH)) {
+                    maxW = Math.max(200, window.innerWidth * 0.8);
+                    maxH = Math.max(200, window.innerHeight * 0.6);
                 }
-                redraw();
+
+                let w = origImage.width, h = origImage.height;
+                const scale = Math.min(maxW / w, maxH / h);
+                const newW = Math.round(w * scale);
+                const newH = Math.round(h * scale);
+
+                // 只有尺寸真正變化時才更新
+                if (displayWidth !== newW || displayHeight !== newH) {
+                    displayWidth = newW;
+                    displayHeight = newH;
+                    canvas.width = displayWidth;
+                    canvas.height = displayHeight;
+                    canvas.style.width = displayWidth + 'px';
+                    canvas.style.height = displayHeight + 'px';
+                    scaleRatio = origImage.width / displayWidth;
+
+                    if (points.length === 4) {
+                        const oldW = canvas.width || displayWidth;
+                        const oldH = canvas.height || displayHeight;
+                        if (oldW > 0 && oldH > 0) {
+                            const sx = displayWidth / oldW;
+                            const sy = displayHeight / oldH;
+                            points = points.map(p => ({
+                                x: Math.min(displayWidth - 2, Math.max(2, p.x * sx)),
+                                y: Math.min(displayHeight - 2, Math.max(2, p.y * sy))
+                            }));
+                        } else {
+                            resetToFull();
+                        }
+                    }
+                    redraw();
+                }
+            } finally {
+                // 確保無論如何都會解除鎖定
+                isResizing = false;
             }
-            fitting = false;
         }
 
-        // 防抖監聽 resize
-        let resizeTimer = null;
+        // 監聽容器尺寸變化（防抖 + 鎖定）
         const ro = new ResizeObserver(() => {
             if (origImage) {
-                clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(() => { fitCanvasToWindow(true); }, 100);
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    // 若已在調整中則跳過
+                    if (!isResizing) {
+                        fitCanvasToWindow(true);
+                    }
+                }, 100);
             }
         });
         ro.observe(document.getElementById('canvas-container'));
+
+        // 監聽視窗變化
         window.addEventListener('resize', () => {
             if (origImage) {
-                clearTimeout(resizeTimer);
-                resizeTimer = setTimeout(() => { fitCanvasToWindow(true); }, 100);
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    if (!isResizing) {
+                        fitCanvasToWindow(true);
+                    }
+                }, 100);
             }
         });
 
@@ -801,7 +818,6 @@
                 return;
             }
 
-            // 若為 Android LINE 模式（自動或手動強制），使用遮罩
             if (useAndroidLineMode()) {
                 const saveBtn = document.getElementById('btn-save');
                 saveBtn.disabled = true;
@@ -882,7 +898,7 @@
                 return;
             }
 
-            // ---- 一般模式（包含 iPhone LINE、Safari、Chrome 等） ----
+            // ---- 一般模式 ----
             const saveBtn = document.getElementById('btn-save');
             saveBtn.disabled = true;
             saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
@@ -972,7 +988,6 @@
 
                         const mobile = isMobileDevice();
 
-                        // 1. 嘗試系統分享
                         if (mobile && navigator.share && navigator.canShare) {
                             const file = new File([blob], fileName, { type: mimeType });
                             const shareData = { files: [file], title: '掃描結果' };
@@ -996,7 +1011,6 @@
                             }
                         }
 
-                        // 2. 傳統下載
                         try {
                             const link = document.createElement('a');
                             link.download = fileName;
@@ -1013,7 +1027,6 @@
                             console.warn('Download failed', e);
                         }
 
-                        // 3. 最終王牌：遮罩顯示
                         const dataUrl = outCanvas.toDataURL('image/png');
                         showImageOverlay(dataUrl);
                         saveBtn.disabled = false;
