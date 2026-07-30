@@ -351,27 +351,25 @@
         let forceAndroidLineMode = false; // 手動強制模式
 
         // ============================================================
-        //  精確裝置偵測 (修正 iPhone / Android 誤判)
+        //  ★★★ 精確裝置偵測（採用業界標準方法） ★★★
         // ============================================================
         function detectBrowser() {
-            const ua = navigator.userAgent || '';
-            
-            // 1. 先判斷是否為 iOS 裝置 (iPhone / iPad / iPod)
-            const isIOS = /iPad|iPhone|iPod/.test(ua);
-            // 2. 判斷是否為 Android 裝置
-            const isAndroid = /Android/.test(ua);
-            // 3. 處理 iPad 桌面版模式 (可能不包含 iPhone/iPod，但 touch 支援)
+            const ua = navigator.userAgent;
+            // 使用正規方式判斷 iOS：檢查是否包含 iPhone/iPad/iPod，或者 Mac 且包含 Mobile
+            const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+                          (/Mac OS X/.test(ua) && /Mobile/.test(ua));
+            // 判斷 Android（必須包含 Android 且不包含 Windows）
+            const isAndroid = /Android/.test(ua) && !/Windows/.test(ua);
+            // 判斷 iPad 桌面版模式（可能回報 Mac OS X 但帶有 touch 能力）
             const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
-            // 真正的 iPhone (排除 iPad 桌面版)
-            const isIPhone = /iPhone/.test(ua) && !isIPadDesktop;
-            // 真正的 Android (排除 Windows 等)
-            const isAndroidDevice = isAndroid && !/Windows/.test(ua);
+            // 真正的 iPhone（排除 iPad 桌面版）
+            const isIPhone = (/iPhone/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua))) && !isIPadDesktop;
 
             // 檢查 LINE
             const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
             
-            // 精確判斷 Android LINE 與 iPhone LINE
-            const isAndroidLine = isAndroidDevice && isLine;
+            // 精確判斷
+            const isAndroidLine = isAndroid && isLine;
             const isIPhoneLine = isIPhone && isLine;
 
             // 顯示警告資訊
@@ -397,9 +395,12 @@
             }
             if (warningMsg) warningText.textContent = warningMsg;
 
+            // 除錯輸出（可於控制台查看）
+            console.log('Device Detection:', { ua, isIOS, isAndroid, isIPhone, isLine, isAndroidLine, isIPhoneLine });
+
             return {
                 isLine,
-                isAndroid: isAndroidDevice,
+                isAndroid,
                 isIOS,
                 isIPhone,
                 isAndroidLine,
@@ -408,7 +409,7 @@
             };
         }
 
-        // 手動切換模式（讓用戶可覆蓋）
+        // 手動切換模式
         function toggleForceMode() {
             forceAndroidLineMode = !forceAndroidLineMode;
             const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
@@ -421,21 +422,18 @@
                 statusBadge.style.color = '#ff9966';
                 warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
             } else {
-                // 重新套用自動偵測結果
                 if (!info.isLine) {
                     statusBadge.textContent = '系統就緒';
                     statusBadge.classList.add('ready');
                     lineWarning.style.display = 'none';
                 } else {
-                    // 重新執行偵測顯示警告
-                    detectBrowser();
+                    detectBrowser(); // 重新套用自動偵測
                 }
             }
         }
 
         let browserInfo = detectBrowser();
 
-        // 是否使用 Android LINE 遮罩模式（自動判定或手動強制）
         function useAndroidLineMode() {
             if (forceAndroidLineMode) return true;
             return browserInfo.isAndroidLine;

@@ -10,6 +10,7 @@
         html, body { height: 100%; height: 100dvh; overflow: hidden; background-color: #121212; color: #e0e0e0; }
         body { display: flex; flex-direction: column; height: 100%; height: 100dvh; overflow: hidden; position: relative; }
 
+        /* 警告條僅在 Android LINE 顯示，iPhone LINE 隱藏 */
         #line-warning {
             display: none;
             background: #ff6b35;
@@ -52,6 +53,7 @@
         .logo small { font-size: 0.7rem; font-weight: 400; color: #888; margin-left: 4px; }
         .status-badge { font-size: 0.7rem; padding: 3px 10px; border-radius: 20px; background-color: #333; color: #aaa; white-space: nowrap; flex-shrink: 0; }
         .status-badge.ready { background-color: #1b3bbb; color: #8bb2ff; }
+        .status-badge.android-line { background-color: #6b2a1a; color: #ff9966; }
 
         main {
             flex: 1 1 auto;
@@ -178,7 +180,7 @@
 
         #output-canvas { display: none; }
 
-        /* 全螢幕遮罩 */
+        /* 全螢幕遮罩（僅在 Android LINE 強制使用） */
         #image-overlay {
             display: none;
             position: fixed;
@@ -270,9 +272,9 @@
 </head>
 <body>
 
-    <!-- LINE 警告 -->
+    <!-- 警告條（僅 Android LINE 顯示） -->
     <div id="line-warning">
-        <span id="warning-text">⚠️ 偵測到 LINE 瀏覽器，下載可能受限。</span>
+        <span id="warning-text">⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。</span>
         <span class="switch-mode" onclick="toggleForceMode()">🔄 切換模式</span>
         <span style="display:inline-block;margin-left:6px;font-size:1.2rem;">📱</span>
     </div>
@@ -314,7 +316,7 @@
 
     <canvas id="output-canvas"></canvas>
 
-    <!-- 全螢幕遮罩 -->
+    <!-- 全螢幕遮罩（僅 Android LINE 使用） -->
     <div id="image-overlay">
         <img id="overlay-img" src="" alt="掃描結果" />
         <div class="controls">
@@ -322,7 +324,7 @@
             <button class="close" onclick="closeOverlay()">✕ 關閉</button>
         </div>
         <p>📸 點「分享」可儲存至相簿；若無效，請 <b>截圖</b> 儲存</p>
-        <p class="hint">💡 建議使用 Chrome / Safari 瀏覽器以獲得完整下載功能</p>
+        <p class="hint">💡 建議使用 Chrome / Samsung 瀏覽器以獲得完整下載功能</p>
     </div>
 
     <script>
@@ -348,58 +350,55 @@
 
         const MAX_IMAGE_SIZE = 2000;
         let lastProcessedDataURL = null;
-        let forceAndroidLineMode = false; // 手動強制模式
+        let forceAndroidLineMode = false; // 手動強制
 
         // ============================================================
-        //  精確裝置偵測 (修正 iPhone / Android 誤判)
+        //  精確裝置偵測（僅 Android LINE 顯示警告，iPhone LINE 不顯示）
         // ============================================================
         function detectBrowser() {
-            const ua = navigator.userAgent || '';
-            
-            // 1. 先判斷是否為 iOS 裝置 (iPhone / iPad / iPod)
-            const isIOS = /iPad|iPhone|iPod/.test(ua);
-            // 2. 判斷是否為 Android 裝置
-            const isAndroid = /Android/.test(ua);
-            // 3. 處理 iPad 桌面版模式 (可能不包含 iPhone/iPod，但 touch 支援)
+            const ua = navigator.userAgent;
+            // 判斷 iOS（包含 iPhone / iPad / iPod，以及 Mac+Mobile）
+            const isIOS = /iPad|iPhone|iPod/.test(ua) ||
+                          (/Mac OS X/.test(ua) && /Mobile/.test(ua));
+            // 判斷 Android（必須包含 Android 且不包含 Windows）
+            const isAndroid = /Android/.test(ua) && !/Windows/.test(ua);
+            // 判斷 iPad 桌面版
             const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
-            // 真正的 iPhone (排除 iPad 桌面版)
-            const isIPhone = /iPhone/.test(ua) && !isIPadDesktop;
-            // 真正的 Android (排除 Windows 等)
-            const isAndroidDevice = isAndroid && !/Windows/.test(ua);
+            // 真正的 iPhone
+            const isIPhone = (/iPhone/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua))) && !isIPadDesktop;
 
             // 檢查 LINE
             const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
             
-            // 精確判斷 Android LINE 與 iPhone LINE
-            const isAndroidLine = isAndroidDevice && isLine;
+            // 精確判斷
+            const isAndroidLine = isAndroid && isLine;
             const isIPhoneLine = isIPhone && isLine;
 
-            // 顯示警告資訊
-            let warningMsg = '';
-            if (isLine) {
+            // 決定警告與狀態
+            // 只有 Android LINE 才顯示警告條與特殊狀態
+            if (isAndroidLine) {
                 lineWarning.style.display = 'block';
-                if (isAndroidLine) {
-                    warningMsg = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
-                    statusBadge.textContent = '⚠️ Android LINE';
-                    statusBadge.style.backgroundColor = '#6b2a1a';
-                    statusBadge.style.color = '#ff9966';
-                } else if (isIPhoneLine) {
-                    warningMsg = '⚠️ 偵測到 iPhone LINE 瀏覽器，建議使用「分享」或「以 Safari 開啟」以獲得最佳體驗。';
-                    statusBadge.textContent = '⚠️ iPhone LINE';
-                    statusBadge.style.backgroundColor = '#6b2a1a';
-                    statusBadge.style.color = '#ff9966';
+                warningText.textContent = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
+                statusBadge.textContent = '⚠️ Android LINE';
+                statusBadge.className = 'status-badge android-line';
+            } else {
+                // 所有其他情況（包含 iPhone LINE、Chrome、Safari 等）都不顯示警告
+                lineWarning.style.display = 'none';
+                // 若 OpenCV 已就緒則顯示系統就緒，否則保持載入中
+                if (cvReady) {
+                    statusBadge.textContent = '系統就緒';
+                    statusBadge.className = 'status-badge ready';
                 } else {
-                    warningMsg = '⚠️ 偵測到 LINE 瀏覽器（非 Android/iPhone），下載可能受限。建議點右上角「⋯」→「以瀏覽器開啟」。';
-                    statusBadge.textContent = '⚠️ LINE 瀏覽器';
-                    statusBadge.style.backgroundColor = '#6b2a1a';
-                    statusBadge.style.color = '#ff9966';
+                    statusBadge.textContent = '載入中…';
+                    statusBadge.className = 'status-badge';
                 }
             }
-            if (warningMsg) warningText.textContent = warningMsg;
+
+            console.log('Device Detection:', { ua, isIOS, isAndroid, isIPhone, isLine, isAndroidLine, isIPhoneLine });
 
             return {
                 isLine,
-                isAndroid: isAndroidDevice,
+                isAndroid,
                 isIOS,
                 isIPhone,
                 isAndroidLine,
@@ -408,7 +407,7 @@
             };
         }
 
-        // 手動切換模式（讓用戶可覆蓋）
+        // 手動切換模式（只在 Android LINE 顯示時有效，但保留給用戶強制）
         function toggleForceMode() {
             forceAndroidLineMode = !forceAndroidLineMode;
             const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
@@ -416,26 +415,26 @@
             // 重新整理狀態
             const info = detectBrowser();
             if (forceAndroidLineMode) {
-                statusBadge.textContent = '🔧 遮罩強制';
-                statusBadge.style.backgroundColor = '#6b2a1a';
-                statusBadge.style.color = '#ff9966';
+                lineWarning.style.display = 'block';
                 warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
+                statusBadge.textContent = '🔧 遮罩強制';
+                statusBadge.className = 'status-badge android-line';
             } else {
-                // 重新套用自動偵測結果
-                if (!info.isLine) {
-                    statusBadge.textContent = '系統就緒';
-                    statusBadge.classList.add('ready');
+                // 重新套用自動偵測
+                detectBrowser();
+                // 若沒有 Android LINE，需確保關閉警告
+                if (!info.isAndroidLine) {
                     lineWarning.style.display = 'none';
-                } else {
-                    // 重新執行偵測顯示警告
-                    detectBrowser();
+                    if (cvReady) {
+                        statusBadge.textContent = '系統就緒';
+                        statusBadge.className = 'status-badge ready';
+                    }
                 }
             }
         }
 
         let browserInfo = detectBrowser();
 
-        // 是否使用 Android LINE 遮罩模式（自動判定或手動強制）
         function useAndroidLineMode() {
             if (forceAndroidLineMode) return true;
             return browserInfo.isAndroidLine;
@@ -447,13 +446,13 @@
         function onOpenCvReady() {
             cv.onRuntimeInitialized = () => {
                 cvReady = true;
-                if (!browserInfo.isLine && !forceAndroidLineMode) {
+                // 重新偵測一次，更新狀態
+                browserInfo = detectBrowser();
+                if (!browserInfo.isAndroidLine && !forceAndroidLineMode) {
                     statusBadge.textContent = '系統就緒';
-                    statusBadge.classList.add('ready');
-                } else if (useAndroidLineMode()) {
-                    statusBadge.textContent = '⚠️ 遮罩模式';
+                    statusBadge.className = 'status-badge ready';
                 } else {
-                    statusBadge.textContent = '⚠️ 請用瀏覽器開啟';
+                    // 若為 Android LINE，狀態已在 detectBrowser 中設定
                 }
             };
         }
@@ -773,7 +772,7 @@
         }
 
         // ============================================================
-        //  ★★★ 全螢幕遮罩顯示 ★★★
+        //  ★★★ 全螢幕遮罩顯示（僅 Android LINE 使用） ★★★
         // ============================================================
         function showImageOverlay(dataUrl) {
             lastProcessedDataURL = dataUrl;
@@ -815,7 +814,7 @@
         }
 
         // ============================================================
-        //  ★★★ 儲存邏輯（根據模式選擇） ★★★
+        //  ★★★ 儲存邏輯 ★★★
         // ============================================================
         function processAndSave() {
             if (!origImage || points.length !== 4) {
@@ -984,7 +983,7 @@
 
                     outCanvas.toBlob(function(blob) {
                         if (!blob) {
-                            // 若 blob 失敗，改為遮罩顯示
+                            // 若 blob 失敗，改為遮罩顯示（備用）
                             const dataUrl = outCanvas.toDataURL('image/png');
                             showImageOverlay(dataUrl);
                             finalMat.delete();
@@ -1037,7 +1036,7 @@
                             console.warn('Download failed', e);
                         }
 
-                        // 3. 最終王牌：遮罩顯示
+                        // 3. 最終王牌：遮罩顯示（備用）
                         const dataUrl = outCanvas.toDataURL('image/png');
                         showImageOverlay(dataUrl);
                         saveBtn.disabled = false;
@@ -1059,8 +1058,12 @@
         resetToFull();
 
         document.addEventListener('DOMContentLoaded', function() {
-            if (browserInfo.isLine || forceAndroidLineMode) {
+            // 根據偵測決定是否顯示警告
+            browserInfo = detectBrowser();
+            if (browserInfo.isAndroidLine || forceAndroidLineMode) {
                 lineWarning.style.display = 'block';
+            } else {
+                lineWarning.style.display = 'none';
             }
         });
 
