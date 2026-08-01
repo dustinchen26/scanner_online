@@ -465,8 +465,8 @@
             </label>
             <label class="select-label">
                 <select id="export-format" class="custom-select">
-                    <option value="png" selected>PNG 無損</option>
-                    <option value="jpg_100">JPG 100%</option>
+                    <option value="png">PNG 無損</option>
+                    <option value="jpg_100" selected>JPG 100%</option>
                     <option value="jpg_98">JPG 98%</option>
                     <option value="jpg_95">JPG 95%</option>
                 </select>
@@ -500,6 +500,7 @@
         //  7. 輸出格式：PNG 無損 / JPG 100% / 98% / 95%
         //  8. 支援 display-p3 廣色域 (瀏覽器有支援時自動啟用)
         //  9. 記憶體最佳化，及時釋放 Mat 物件
+        //  10. 預設輸出改為 JPG 100%，避免 PNG 肥大
         // ============================================================
         (function() {
             let cvReady = false;
