@@ -9,45 +9,36 @@
         //  全域 OpenCV 初始化 (修正時序問題)
         // ============================================================
         (function() {
-            // 定義 cvReady 的 getter/setter，讓外部可監聽狀態變化
             var _cvReady = false;
             Object.defineProperty(window, 'cvReady', {
                 get: function() { return _cvReady; },
                 set: function(val) {
                     _cvReady = val;
                     if (val) {
-                        // 當 OpenCV 就緒時，更新 UI 並處理待處理圖片
                         var badge = document.getElementById('status-badge');
                         if (badge) {
                             badge.textContent = '系統就緒';
                             badge.className = 'status-badge ready';
                         }
-                        // 啟用按鈕
                         var btns = ['btn-auto', 'btn-reset', 'btn-save'];
                         btns.forEach(function(id) {
                             var el = document.getElementById(id);
                             if (el) el.disabled = false;
                         });
-                        // 若有等待中的圖片，立即處理
                         if (window.pendingImageFile) {
                             processPendingImage(window.pendingImageFile);
                             window.pendingImageFile = null;
                         }
-                        // 偵測瀏覽器 (更新 LINE 警告)
                         detectBrowser();
                     }
                 }
             });
 
-            // 定義 onOpenCvReady，由 opencv.js 的 onload 或直接呼叫
             window.onOpenCvReady = function() {
                 if (typeof cv !== 'undefined') {
-                    // 檢查 OpenCV 是否已完成初始化 (cv.Mat 是否存在)
                     if (cv.Mat && cv.Mat.prototype) {
-                        // 已初始化，直接設定 cvReady
                         window.cvReady = true;
                     } else {
-                        // 尚未初始化，設定回調
                         cv.onRuntimeInitialized = function() {
                             window.cvReady = true;
                             console.log('OpenCV 初始化完成 (runtime)');
@@ -63,17 +54,15 @@
                 }
             };
 
-            // 若 opencv.js 已載入但尚未觸發 onload (例如快取)，手動觸發
             if (typeof cv !== 'undefined') {
                 window.onOpenCvReady();
             }
         })();
     </script>
-    <!-- 載入 OpenCV (非同步) -->
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvReady();" onerror="console.error('OpenCV load failed');"></script>
 
     <style>
-        /* === 樣式（與原設計相同，略作微調） === */
+        /* === 樣式（完整保留原設計） === */
         * {
             box-sizing: border-box;
             margin: 0;
@@ -469,6 +458,17 @@
                 justify-content: center;
             }
         }
+        /* 自訂 Toast 動畫 */
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+        }
     </style>
 </head>
 <body>
@@ -528,13 +528,13 @@
 
     <script>
         // ============================================================
-        //  核心程式（高畫質重構版 v2）- 通用全平台
+        //  核心程式（高畫質重構版 v2）- 通用全平台 + iOS 強化
         // ============================================================
         (function() {
             // ----- 全域變數 -----
             let cvReady = false;
-            let origImage = null;          // Canvas 或 Image 物件
-            let imgMat = null;             // OpenCV Mat
+            let origImage = null;
+            let imgMat = null;
             let displayWidth = 0;
             let displayHeight = 0;
             let scaleRatio = 1.0;
@@ -560,18 +560,57 @@
             const lineWarning = document.getElementById('line-warning');
             const warningText = document.getElementById('warning-text');
 
-            const MAX_IMAGE_SIZE = 8192;
+            // 針對 iOS 降低最大尺寸以節省記憶體
+            const MAX_IMAGE_SIZE = 4096;
             let lastProcessedDataURL = null;
             let forceAndroidLineMode = false;
             let pendingImageFile = null;
 
+            // ===== 輔助函式：自訂 Toast 訊息 =====
+            function showToast(message, isError = false) {
+                const existing = document.getElementById('custom-toast');
+                if (existing) existing.remove();
+
+                const toast = document.createElement('div');
+                toast.id = 'custom-toast';
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: ${isError ? '#d32f2f' : '#2e7d32'};
+                    color: white;
+                    padding: 12px 24px;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    z-index: 999999;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    max-width: 90%;
+                    text-align: center;
+                    font-size: 1rem;
+                    animation: slideDown 0.3s ease-out;
+                    pointer-events: none;
+                `;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+
+                setTimeout(() => {
+                    toast.style.opacity = '0';
+                    toast.style.transition = 'opacity 0.5s';
+                    setTimeout(() => toast.remove(), 500);
+                }, 3000);
+            }
+
+            // ===== 判斷 iOS =====
+            function isIOS() {
+                return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                       (/Mac OS X/.test(navigator.userAgent) && /Mobile/.test(navigator.userAgent));
+            }
+
             // ----- 裝置偵測 -----
             function detectBrowser() {
                 const ua = navigator.userAgent;
-                const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua));
                 const isAndroid = /Android/.test(ua) && !/Windows/.test(ua);
-                const isIPadDesktop = isIOS && !/iPhone|iPod/.test(ua) && navigator.maxTouchPoints > 1;
-                const isIPhone = (/iPhone/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua))) && !isIPadDesktop;
                 const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
                 const isAndroidLine = isAndroid && isLine;
 
@@ -592,7 +631,7 @@
                         statusBadge.className = 'status-badge';
                     }
                 }
-                return { isAndroidLine, isIPhone, isLine };
+                return { isAndroidLine };
             }
 
             function toggleForceMode() {
@@ -608,77 +647,93 @@
                 return forceAndroidLineMode || browserInfo.isAndroidLine;
             }
 
-            // ----- 同步 cvReady (由全域 getter/setter 觸發) -----
-            // 此處定義 cvReady 的 setter 已在開頭全域中設定，但為了讓內部函數存取，我們使用 window.cvReady
-            // 我們也監聽 cvReady 變化來更新內部變數
-            Object.defineProperty(window, 'cvReady', {
-                get: function() { return cvReady; },
-                set: function(val) {
-                    cvReady = val;
-                    if (val) {
-                        browserInfo = detectBrowser();
-                        if (pendingImageFile) {
-                            processImageFile(pendingImageFile);
-                            pendingImageFile = null;
-                        }
-                        document.getElementById('btn-auto').disabled = false;
-                        document.getElementById('btn-reset').disabled = false;
-                        document.getElementById('btn-save').disabled = false;
-                    }
-                }
-            });
+            // ----- 同步 cvReady (由全域 setter 觸發) -----
+            // 由於我們已用 Object.defineProperty 重新定義 window.cvReady，
+            // 此處只需監聽外部變化，並將值同步到內部變數 cvReady
+            // 但在本 scope 中，我們使用 window.cvReady 的 getter/setter 來間接控制
+            // 實際我們可以直接引用 window.cvReady
+            // 但為了避免混亂，我們用一個內部變數來追蹤，並在 window.cvReady 的 setter 中更新
+            // 但我們在開頭已經定義了 window.cvReady 的 setter，所以此處只需確保內部 cvReady 與之同步
+            // 簡化：直接使用 window.cvReady 作為判斷，並增加監聽
+            // 我們定義一個 observer 函式，但為簡單，我們直接使用 window.cvReady 作為狀態
 
-            // 確保全域的 onOpenCvReady 已觸發 (已在 head 中執行)
-            // 但若 opencv.js 載入失敗，則顯示錯誤
-            if (typeof cv === 'undefined') {
-                setTimeout(function() {
-                    if (!cvReady) {
-                        statusBadge.textContent = '⚠️ OpenCV 載入失敗，請檢查網路';
-                        statusBadge.className = 'status-badge';
-                    }
-                }, 10000);
+            // 為了相容，我們在下方使用 window.cvReady，但因為重新定義，我們用 window.cvReady 來讀取
+
+            // 但我們內部也需要一個變數來保存，我們可以直接引用 window.cvReady 的 getter
+            // 所以所有判讀改為使用 window.cvReady
+
+            // 但有些地方用了 cvReady 變量，我們改為 window.cvReady
+            // 為了向後相容，我們在函數中統一使用 window.cvReady
+            // 但在某些地方，我們可能直接使用 cvReady，但因為是 var 定義，會與 window 屬性衝突，
+            // 最好統一移除 var cvReady 定義，直接使用 window.cvReady
+
+            // 我們將移除 var cvReady 宣告，改用 window.cvReady
+
+            // 但下方程式碼中有許多對 cvReady 的參考，我們得全部改為 window.cvReady
+            // 為避免改動過大，我們重新定義一個函數 isReady() 來封裝
+            function isReady() {
+                return window.cvReady === true;
             }
 
-            // ----- 圖片處理 (高品質解碼) -----
+            // ----- 圖片處理 (高品質 + iOS 相容) -----
             async function processImageFile(file) {
-                if (!cvReady || typeof cv === 'undefined') {
+                if (!isReady() || typeof cv === 'undefined') {
                     pendingImageFile = file;
-                    alert('OpenCV 載入中，請稍後再試。若仍未就緒，請檢查網路或重新整理。');
+                    showToast('⏳ OpenCV 載入中，請稍後...', false);
                     return;
                 }
 
+                showToast('⏳ 正在載入圖片...', false);
+
                 try {
-                    let bitmap;
-                    // 使用 createImageBitmap 自動處理 EXIF 旋轉 (移除 colorSpaceConversion 避免 iOS 錯誤)
-                    try {
-                        bitmap = await createImageBitmap(file, {
-                            imageOrientation: 'from-image',
-                            premultiplyAlpha: 'none'
-                            // 不指定 colorSpaceConversion，使用預設
-                        });
-                    } catch (e) {
-                        console.warn('createImageBitmap failed, fallback to Image', e);
-                        // Fallback: 讀取 DataURL
-                        const dataUrl = await new Promise((resolve) => {
+                    let imageSource;
+
+                    // ----- iOS 直接使用傳統方式 (避免 createImageBitmap 問題) -----
+                    if (isIOS()) {
+                        const dataUrl = await new Promise((resolve, reject) => {
                             const reader = new FileReader();
-                            reader.onload = (ev) => resolve(ev.target.result);
+                            reader.onload = (e) => resolve(e.target.result);
+                            reader.onerror = (e) => reject(new Error('讀取檔案失敗'));
                             reader.readAsDataURL(file);
                         });
                         const img = new Image();
                         await new Promise((resolve, reject) => {
                             img.onload = resolve;
-                            img.onerror = reject;
+                            img.onerror = () => reject(new Error('圖片解碼失敗，可能格式不支援'));
                             img.src = dataUrl;
                         });
-                        bitmap = img;
-                        // 注意: 此 fallback 不會自動旋轉，但大部分現代瀏覽器都支援 createImageBitmap
+                        imageSource = img;
+                    } else {
+                        // ----- 非 iOS 使用 createImageBitmap (自動旋轉) -----
+                        try {
+                            imageSource = await createImageBitmap(file, {
+                                imageOrientation: 'from-image',
+                                premultiplyAlpha: 'none'
+                            });
+                        } catch (e) {
+                            console.warn('createImageBitmap 失敗，降級為傳統方式', e);
+                            const dataUrl = await new Promise((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onload = (e) => resolve(e.target.result);
+                                reader.onerror = (e) => reject(new Error('讀取檔案失敗'));
+                                reader.readAsDataURL(file);
+                            });
+                            const img = new Image();
+                            await new Promise((resolve, reject) => {
+                                img.onload = resolve;
+                                img.onerror = () => reject(new Error('圖片解碼失敗'));
+                                img.src = dataUrl;
+                            });
+                            imageSource = img;
+                        }
                     }
 
-                    let w = bitmap.width;
-                    let h = bitmap.height;
+                    let w = imageSource.width;
+                    let h = imageSource.height;
                     let scale = 1;
                     if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
                         scale = Math.min(MAX_IMAGE_SIZE / w, MAX_IMAGE_SIZE / h);
+                        showToast(`⚠️ 圖片過大，已縮小至 ${Math.round(w*scale)}x${Math.round(h*scale)}`, false);
                     }
                     const newW = Math.round(w * scale);
                     const newH = Math.round(h * scale);
@@ -693,31 +748,33 @@
                     });
                     tempCtx.imageSmoothingEnabled = true;
                     tempCtx.imageSmoothingQuality = 'high';
-                    tempCtx.drawImage(bitmap, 0, 0, newW, newH);
+                    tempCtx.drawImage(imageSource, 0, 0, newW, newH);
 
-                    if (typeof bitmap.close === 'function') bitmap.close();
+                    if (typeof imageSource.close === 'function') imageSource.close();
 
                     origImage = tempCanvas;
 
-                    // 清除舊的 Mat
                     if (imgMat) imgMat.delete();
                     try {
                         imgMat = cv.imread(tempCanvas);
                     } catch (e) {
-                        console.error('cv.imread error:', e);
-                        alert('圖片格式不支援，請嘗試其他圖片');
-                        return;
+                        throw new Error('OpenCV 無法解析圖片：' + e.message);
                     }
 
-                    // 更新顯示
                     fitCanvasToWindow(true);
                     placeholder.style.display = 'none';
                     resetToFull();
                     autoDetect();
 
+                    showToast('✅ 圖片載入成功！', false);
+
                 } catch (err) {
                     console.error('processImageFile error:', err);
-                    alert('載入圖片失敗，請嘗試其他圖片。錯誤：' + err.message);
+                    showToast('❌ 載入失敗：' + err.message, true);
+                    document.getElementById('btn-auto').disabled = true;
+                    document.getElementById('btn-reset').disabled = true;
+                    document.getElementById('btn-save').disabled = true;
+                    pendingImageFile = null;
                 }
             }
 
@@ -726,14 +783,21 @@
             }
             window.processPendingImage = processPendingImage;
 
+            // ----- 檔案選擇處理 (增加回饋) -----
             function handleFileSelect(e) {
                 const file = e.target.files[0];
                 if (!file) return;
-                if (!cvReady || typeof cv === 'undefined') {
+
+                if (file.size > 50 * 1024 * 1024) {
+                    showToast('⚠️ 檔案過大 (超過 50MB)，可能導致記憶體不足', true);
+                }
+
+                if (!isReady() || typeof cv === 'undefined') {
                     pendingImageFile = file;
-                    alert('OpenCV 載入中，請稍後再試。若仍未就緒，請檢查網路或重新整理。');
+                    showToast('⏳ OpenCV 載入中，請稍後...', false);
                     return;
                 }
+
                 processImageFile(file);
             }
             window.handleFileSelect = handleFileSelect;
@@ -796,7 +860,6 @@
                 }
             }
 
-            // ResizeObserver 防抖
             const ro = new ResizeObserver(() => {
                 if (origImage) {
                     clearTimeout(resizeTimeout);
@@ -885,7 +948,7 @@
 
             // ----- 自動偵測 -----
             function autoDetect() {
-                if (!cvReady || !imgMat) { resetToFull(); return; }
+                if (!isReady() || !imgMat) { resetToFull(); return; }
                 let gray = new cv.Mat(),
                     blurred = new cv.Mat(),
                     thresh = new cv.Mat(),
@@ -939,7 +1002,6 @@
                     console.warn("Auto detect error, keeping full view", err);
                     resetToFull();
                 } finally {
-                    // 釋放 Mat
                     gray.delete();
                     blurred.delete();
                     thresh.delete();
@@ -1021,7 +1083,6 @@
                 enhanced.convertTo(finalResult, -1, 1.1, -10);
                 let rgba = new cv.Mat();
                 cv.cvtColor(finalResult, rgba, cv.COLOR_RGB2RGBA);
-                // 釋放中間變數
                 rgbMat.delete();
                 smooth.delete();
                 hsv.delete();
@@ -1098,7 +1159,6 @@
                 saveBtn.disabled = true;
                 saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
 
-                // 延遲確保 UI 更新
                 setTimeout(() => {
                     try {
                         const sortedPts = sortPoints(points);
@@ -1163,7 +1223,6 @@
                         outCtx.imageSmoothingQuality = 'high';
                         cv.imshow(outCanvas, finalMat);
 
-                        // 釋放 Mat
                         srcTri.delete();
                         dstTri.delete();
                         M.delete();
@@ -1236,7 +1295,6 @@
                                 }
                             }
 
-                            // 桌面下載
                             try {
                                 const link = document.createElement('a');
                                 link.download = fileName;
@@ -1252,7 +1310,6 @@
                                 console.warn('Download failed', e);
                             }
 
-                            // 最終 fallback
                             const dataUrl = outCanvas.toDataURL('image/png');
                             showImageOverlay(dataUrl);
                             saveBtn.disabled = false;
