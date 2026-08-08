@@ -5,28 +5,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover">
     <title>AI 掃描器 v2 (高畫質版 by Dustin)</title>
     <script>
-        // 全域 onOpenCvReady
-        window.onOpenCvReady = function() {
-            if (typeof cv !== 'undefined') {
-                cv.onRuntimeInitialized = function() {
-                    window.cvReady = true;
-                    document.getElementById('status-badge').textContent = '系統就緒';
-                    document.getElementById('status-badge').className = 'status-badge ready';
-                    if (window.pendingImageFile) {
-                        processPendingImage(window.pendingImageFile);
+        // ============================================================
+        //  全域 OpenCV 初始化 (修正時序問題)
+        // ============================================================
+        (function() {
+            // 定義 cvReady 的 getter/setter，讓外部可監聽狀態變化
+            var _cvReady = false;
+            Object.defineProperty(window, 'cvReady', {
+                get: function() { return _cvReady; },
+                set: function(val) {
+                    _cvReady = val;
+                    if (val) {
+                        // 當 OpenCV 就緒時，更新 UI 並處理待處理圖片
+                        var badge = document.getElementById('status-badge');
+                        if (badge) {
+                            badge.textContent = '系統就緒';
+                            badge.className = 'status-badge ready';
+                        }
+                        // 啟用按鈕
+                        var btns = ['btn-auto', 'btn-reset', 'btn-save'];
+                        btns.forEach(function(id) {
+                            var el = document.getElementById(id);
+                            if (el) el.disabled = false;
+                        });
+                        // 若有等待中的圖片，立即處理
+                        if (window.pendingImageFile) {
+                            processPendingImage(window.pendingImageFile);
+                            window.pendingImageFile = null;
+                        }
+                        // 偵測瀏覽器 (更新 LINE 警告)
+                        detectBrowser();
                     }
-                };
-            } else {
-                console.warn('OpenCV not defined after load');
-                document.getElementById('status-badge').textContent = '⚠️ OpenCV 載入失敗';
+                }
+            });
+
+            // 定義 onOpenCvReady，由 opencv.js 的 onload 或直接呼叫
+            window.onOpenCvReady = function() {
+                if (typeof cv !== 'undefined') {
+                    // 檢查 OpenCV 是否已完成初始化 (cv.Mat 是否存在)
+                    if (cv.Mat && cv.Mat.prototype) {
+                        // 已初始化，直接設定 cvReady
+                        window.cvReady = true;
+                    } else {
+                        // 尚未初始化，設定回調
+                        cv.onRuntimeInitialized = function() {
+                            window.cvReady = true;
+                            console.log('OpenCV 初始化完成 (runtime)');
+                        };
+                    }
+                } else {
+                    console.warn('OpenCV 未載入');
+                    var badge = document.getElementById('status-badge');
+                    if (badge) {
+                        badge.textContent = '⚠️ OpenCV 載入失敗';
+                        badge.className = 'status-badge';
+                    }
+                }
+            };
+
+            // 若 opencv.js 已載入但尚未觸發 onload (例如快取)，手動觸發
+            if (typeof cv !== 'undefined') {
+                window.onOpenCvReady();
             }
-        };
-        if (typeof cv !== 'undefined' && !window.cvReady) {
-            window.onOpenCvReady();
-        }
+        })();
     </script>
+    <!-- 載入 OpenCV (非同步) -->
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.onOpenCvReady();" onerror="console.error('OpenCV load failed');"></script>
+
     <style>
+        /* === 樣式（與原設計相同，略作微調） === */
         * {
             box-sizing: border-box;
             margin: 0;
@@ -49,7 +96,6 @@
             overflow: hidden;
             position: relative;
         }
-
         #line-warning {
             display: none;
             background: #ff6b35;
@@ -83,7 +129,6 @@
                 opacity: 1;
             }
         }
-
         header {
             background-color: #1e1e1e;
             padding: 8px 14px;
@@ -128,7 +173,6 @@
             background-color: #6b2a1a;
             color: #ff9966;
         }
-
         main {
             flex: 1 1 auto;
             position: relative;
@@ -172,7 +216,6 @@
             padding: 0 16px;
             user-select: none;
         }
-
         footer {
             background-color: #1e1e1e;
             padding: 6px 10px;
@@ -230,7 +273,6 @@
             background-color: #1a4a2e;
             border-color: #1a4a2e;
         }
-
         .checkbox-label,
         .select-label {
             display: flex;
@@ -277,11 +319,9 @@
                 transform: rotate(360deg);
             }
         }
-
         #output-canvas {
             display: none;
         }
-
         #image-overlay {
             display: none;
             position: fixed;
@@ -350,7 +390,6 @@
             font-size: 0.8rem;
             margin-top: 8px;
         }
-
         @media (max-width: 480px) {
             header {
                 padding: 4px 8px;
@@ -489,23 +528,13 @@
 
     <script>
         // ============================================================
-        //  核心程式（高畫質重構版 v2）
-        //  修改重點：
-        //  1. MAX_IMAGE_SIZE 提升至 8192，保留原始解析度
-        //  2. 移除 MAX_OUTPUT 輸出限制
-        //  3. 使用 createImageBitmap 高品質解碼 + EXIF 自動旋轉
-        //  4. 移除 PNG 重編碼，直接使用 Canvas 資料
-        //  5. 主畫布與輸出畫布加入 imageSmoothingQuality = "high"
-        //  6. warpPerspective 改用 BORDER_REPLICATE 消除黑邊
-        //  7. 輸出格式：PNG 無損 / JPG 100% / 98% / 95%
-        //  8. 支援 display-p3 廣色域 (瀏覽器有支援時自動啟用)
-        //  9. 記憶體最佳化，及時釋放 Mat 物件
-        //  10. 預設輸出改為 JPG 100%，避免 PNG 肥大
+        //  核心程式（高畫質重構版 v2）- 通用全平台
         // ============================================================
         (function() {
+            // ----- 全域變數 -----
             let cvReady = false;
-            let origImage = null; // 保留原始圖片 (Canvas 或 Image)
-            let imgMat = null; // OpenCV Mat
+            let origImage = null;          // Canvas 或 Image 物件
+            let imgMat = null;             // OpenCV Mat
             let displayWidth = 0;
             let displayHeight = 0;
             let scaleRatio = 1.0;
@@ -531,15 +560,12 @@
             const lineWarning = document.getElementById('line-warning');
             const warningText = document.getElementById('warning-text');
 
-            // 大幅提高上限，保留原始解析度 (8192 足以涵蓋絕大多數手機照片)
             const MAX_IMAGE_SIZE = 8192;
             let lastProcessedDataURL = null;
             let forceAndroidLineMode = false;
             let pendingImageFile = null;
 
-            // ============================================================
-            //  裝置偵測
-            // ============================================================
+            // ----- 裝置偵測 -----
             function detectBrowser() {
                 const ua = navigator.userAgent;
                 const isIOS = /iPad|iPhone|iPod/.test(ua) || (/Mac OS X/.test(ua) && /Mobile/.test(ua));
@@ -549,10 +575,12 @@
                 const isLine = /Line/i.test(ua) || /LINE/i.test(ua);
                 const isAndroidLine = isAndroid && isLine;
 
-                if (isAndroidLine) {
+                if (forceAndroidLineMode || isAndroidLine) {
                     lineWarning.style.display = 'block';
-                    warningText.textContent = '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
-                    statusBadge.textContent = '⚠️ Android LINE';
+                    warningText.textContent = forceAndroidLineMode ?
+                        '⚠️ 手動強制為「Android LINE 遮罩模式」' :
+                        '⚠️ 偵測到 Android LINE 瀏覽器，無法直接下載。系統將在「本頁面」顯示圖片，請使用「分享」或「截圖」儲存。';
+                    statusBadge.textContent = forceAndroidLineMode ? '🔧 遮罩強制' : '⚠️ Android LINE';
                     statusBadge.className = 'status-badge android-line';
                 } else {
                     lineWarning.style.display = 'none';
@@ -569,24 +597,10 @@
 
             function toggleForceMode() {
                 forceAndroidLineMode = !forceAndroidLineMode;
-                const msg = forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」';
-                alert(msg);
-                const info = detectBrowser();
-                if (forceAndroidLineMode) {
-                    lineWarning.style.display = 'block';
-                    warningText.textContent = '⚠️ 手動強制為「Android LINE 遮罩模式」。';
-                    statusBadge.textContent = '🔧 遮罩強制';
-                    statusBadge.className = 'status-badge android-line';
-                } else {
-                    if (!info.isAndroidLine) {
-                        lineWarning.style.display = 'none';
-                        if (cvReady) {
-                            statusBadge.textContent = '系統就緒';
-                            statusBadge.className = 'status-badge ready';
-                        }
-                    }
-                }
+                alert(forceAndroidLineMode ? '已切換至「Android LINE 遮罩模式」' : '已切換回「自動偵測模式」');
+                detectBrowser();
             }
+            window.toggleForceMode = toggleForceMode;
 
             let browserInfo = detectBrowser();
 
@@ -594,10 +608,11 @@
                 return forceAndroidLineMode || browserInfo.isAndroidLine;
             }
 
-            // ============================================================
-            //  OpenCV 狀態同步
-            // ============================================================
+            // ----- 同步 cvReady (由全域 getter/setter 觸發) -----
+            // 此處定義 cvReady 的 setter 已在開頭全域中設定，但為了讓內部函數存取，我們使用 window.cvReady
+            // 我們也監聽 cvReady 變化來更新內部變數
             Object.defineProperty(window, 'cvReady', {
+                get: function() { return cvReady; },
                 set: function(val) {
                     cvReady = val;
                     if (val) {
@@ -610,30 +625,21 @@
                         document.getElementById('btn-reset').disabled = false;
                         document.getElementById('btn-save').disabled = false;
                     }
-                },
-                get: function() { return cvReady; }
+                }
             });
 
-            const originalOnReady = window.onOpenCvReady;
-            window.onOpenCvReady = function() {
-                if (typeof originalOnReady === 'function') originalOnReady();
-                if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
-                    cv.onRuntimeInitialized = function() {
-                        window.cvReady = true;
-                        console.log('OpenCV ready');
-                    };
-                }
-            };
-            if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
-                cv.onRuntimeInitialized = function() {
-                    window.cvReady = true;
-                    console.log('OpenCV ready (immediate)');
-                };
+            // 確保全域的 onOpenCvReady 已觸發 (已在 head 中執行)
+            // 但若 opencv.js 載入失敗，則顯示錯誤
+            if (typeof cv === 'undefined') {
+                setTimeout(function() {
+                    if (!cvReady) {
+                        statusBadge.textContent = '⚠️ OpenCV 載入失敗，請檢查網路';
+                        statusBadge.className = 'status-badge';
+                    }
+                }, 10000);
             }
 
-            // ============================================================
-            //  處理圖片（高畫質版：使用 createImageBitmap）
-            // ============================================================
+            // ----- 圖片處理 (高品質解碼) -----
             async function processImageFile(file) {
                 if (!cvReady || typeof cv === 'undefined') {
                     pendingImageFile = file;
@@ -642,17 +648,17 @@
                 }
 
                 try {
-                    // ---- 1. 使用 createImageBitmap 高品質解碼 + EXIF 自動旋轉 ----
                     let bitmap;
+                    // 使用 createImageBitmap 自動處理 EXIF 旋轉 (移除 colorSpaceConversion 避免 iOS 錯誤)
                     try {
                         bitmap = await createImageBitmap(file, {
                             imageOrientation: 'from-image',
-                            premultiplyAlpha: 'none',
-                            colorSpaceConversion: 'default'
+                            premultiplyAlpha: 'none'
+                            // 不指定 colorSpaceConversion，使用預設
                         });
                     } catch (e) {
                         console.warn('createImageBitmap failed, fallback to Image', e);
-                        // Fallback: 傳統 Image 方式
+                        // Fallback: 讀取 DataURL
                         const dataUrl = await new Promise((resolve) => {
                             const reader = new FileReader();
                             reader.onload = (ev) => resolve(ev.target.result);
@@ -665,19 +671,19 @@
                             img.src = dataUrl;
                         });
                         bitmap = img;
+                        // 注意: 此 fallback 不會自動旋轉，但大部分現代瀏覽器都支援 createImageBitmap
                     }
 
                     let w = bitmap.width;
                     let h = bitmap.height;
                     let scale = 1;
-                    // 僅在超過 MAX_IMAGE_SIZE 時才縮小（保留最大細節）
                     if (w > MAX_IMAGE_SIZE || h > MAX_IMAGE_SIZE) {
                         scale = Math.min(MAX_IMAGE_SIZE / w, MAX_IMAGE_SIZE / h);
                     }
                     const newW = Math.round(w * scale);
                     const newH = Math.round(h * scale);
 
-                    // ---- 2. 繪製到 tempCanvas（保留原始色域） ----
+                    // 繪製到暫存 Canvas
                     const tempCanvas = document.createElement('canvas');
                     tempCanvas.width = newW;
                     tempCanvas.height = newH;
@@ -689,15 +695,11 @@
                     tempCtx.imageSmoothingQuality = 'high';
                     tempCtx.drawImage(bitmap, 0, 0, newW, newH);
 
-                    // 釋放 bitmap (如果是 ImageBitmap 類型)
-                    if (typeof bitmap.close === 'function') {
-                        bitmap.close();
-                    }
+                    if (typeof bitmap.close === 'function') bitmap.close();
 
-                    // ---- 3. 直接使用 tempCanvas 作為 origImage（避免 PNG 重編碼） ----
                     origImage = tempCanvas;
 
-                    // ---- 4. 從 tempCanvas 建立 OpenCV Mat ----
+                    // 清除舊的 Mat
                     if (imgMat) imgMat.delete();
                     try {
                         imgMat = cv.imread(tempCanvas);
@@ -707,12 +709,9 @@
                         return;
                     }
 
-                    // ---- 5. 更新顯示 ----
+                    // 更新顯示
                     fitCanvasToWindow(true);
                     placeholder.style.display = 'none';
-                    document.getElementById('btn-auto').disabled = false;
-                    document.getElementById('btn-reset').disabled = false;
-                    document.getElementById('btn-save').disabled = false;
                     resetToFull();
                     autoDetect();
 
@@ -722,17 +721,11 @@
                 }
             }
 
-            // 處理 pending 檔案（相容舊呼叫）
             function processPendingImage(file) {
-                if (file) {
-                    processImageFile(file);
-                }
+                if (file) processImageFile(file);
             }
             window.processPendingImage = processPendingImage;
 
-            // ============================================================
-            //  檔案選擇
-            // ============================================================
             function handleFileSelect(e) {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -743,10 +736,9 @@
                 }
                 processImageFile(file);
             }
+            window.handleFileSelect = handleFileSelect;
 
-            // ============================================================
-            //  自適應畫布（穩定版）
-            // ============================================================
+            // ----- 畫布自適應 (防抖) -----
             function fitCanvasToWindow(force = false) {
                 if (!origImage) return;
                 if (isResizing && !force) return;
@@ -804,6 +796,7 @@
                 }
             }
 
+            // ResizeObserver 防抖
             const ro = new ResizeObserver(() => {
                 if (origImage) {
                     clearTimeout(resizeTimeout);
@@ -827,9 +820,7 @@
                 }
             });
 
-            // ============================================================
-            //  拖曳控制
-            // ============================================================
+            // ----- 拖曳控制 -----
             function getCanvasCoords(e) {
                 const rect = canvas.getBoundingClientRect();
                 const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
@@ -892,20 +883,18 @@
                 return [topLeft, topRight, bottomRight, bottomLeft];
             }
 
-            // ============================================================
-            //  自動偵測
-            // ============================================================
+            // ----- 自動偵測 -----
             function autoDetect() {
                 if (!cvReady || !imgMat) { resetToFull(); return; }
+                let gray = new cv.Mat(),
+                    blurred = new cv.Mat(),
+                    thresh = new cv.Mat(),
+                    contours = new cv.MatVector(),
+                    hierarchy = new cv.Mat();
                 try {
-                    let gray = new cv.Mat();
                     cv.cvtColor(imgMat, gray, cv.COLOR_RGBA2GRAY);
-                    let blurred = new cv.Mat();
                     cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-                    let thresh = new cv.Mat();
                     cv.threshold(blurred, thresh, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-                    let contours = new cv.MatVector();
-                    let hierarchy = new cv.Mat();
                     cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
                     let totalArea = imgMat.rows * imgMat.cols;
@@ -946,17 +935,20 @@
                         if (bestApprox) bestApprox.delete();
                         resetToFull();
                     }
+                } catch (err) {
+                    console.warn("Auto detect error, keeping full view", err);
+                    resetToFull();
+                } finally {
+                    // 釋放 Mat
                     gray.delete();
                     blurred.delete();
                     thresh.delete();
                     contours.delete();
                     hierarchy.delete();
-                } catch (err) {
-                    console.warn("Auto detect error, keeping full view", err);
-                    resetToFull();
                 }
                 redraw();
             }
+            window.autoDetect = autoDetect;
 
             function resetToFull() {
                 const margin = 20;
@@ -977,6 +969,7 @@
                 }
                 redraw();
             }
+            window.resetToFull = resetToFull;
 
             function redraw() {
                 if (!origImage) return;
@@ -1005,8 +998,9 @@
                     });
                 }
             }
+            window.redraw = redraw;
 
-            // ---- 彩色濾鏡 ----
+            // ----- 彩色濾鏡 -----
             function applyColorPerfectFilter(srcMat) {
                 let rgbMat = new cv.Mat();
                 cv.cvtColor(srcMat, rgbMat, cv.COLOR_RGBA2RGB);
@@ -1027,6 +1021,7 @@
                 enhanced.convertTo(finalResult, -1, 1.1, -10);
                 let rgba = new cv.Mat();
                 cv.cvtColor(finalResult, rgba, cv.COLOR_RGB2RGBA);
+                // 釋放中間變數
                 rgbMat.delete();
                 smooth.delete();
                 hsv.delete();
@@ -1038,7 +1033,7 @@
                 return rgba;
             }
 
-            // ---- 判斷行動裝置 ----
+            // ----- 行動裝置判斷 -----
             function isMobileDevice() {
                 const ua = navigator.userAgent || navigator.vendor || window.opera;
                 if (/iPhone|iPad|iPod|Android|BlackBerry|Windows Phone|Opera Mini|IEMobile/i.test(ua)) return true;
@@ -1046,9 +1041,7 @@
                 return false;
             }
 
-            // ============================================================
-            //  全螢幕遮罩顯示
-            // ============================================================
+            // ----- 全螢幕遮罩顯示 -----
             function showImageOverlay(dataUrl) {
                 lastProcessedDataURL = dataUrl;
                 const overlay = document.getElementById('image-overlay');
@@ -1060,6 +1053,7 @@
             function closeOverlay() {
                 document.getElementById('image-overlay').style.display = 'none';
             }
+            window.closeOverlay = closeOverlay;
 
             function shareOverlayImage() {
                 if (!lastProcessedDataURL) {
@@ -1087,16 +1081,14 @@
                         alert('無法處理圖片，請使用截圖儲存。');
                     });
             }
+            window.shareOverlayImage = shareOverlayImage;
 
-            // ============================================================
-            //  儲存邏輯（高畫質輸出，無尺寸限制）
-            // ============================================================
+            // ----- 儲存邏輯 (高畫質輸出) -----
             function processAndSave() {
                 if (!origImage || points.length !== 4) {
                     alert('請先載入圖片並框選區域');
                     return;
                 }
-
                 if (!imgMat || imgMat.empty()) {
                     alert('圖片資料異常，請重新選取檔案');
                     return;
@@ -1106,6 +1098,7 @@
                 saveBtn.disabled = true;
                 saveBtn.innerHTML = '<span class="spinner"></span> 處理中…';
 
+                // 延遲確保 UI 更新
                 setTimeout(() => {
                     try {
                         const sortedPts = sortPoints(points);
@@ -1114,7 +1107,6 @@
                             y: p.y * scaleRatio
                         }));
 
-                        // ---- 計算輸出尺寸（保留原始解析度，不設上限） ----
                         let w1 = Math.hypot(origPts[1].x - origPts[0].x, origPts[1].y - origPts[0].y);
                         let w2 = Math.hypot(origPts[2].x - origPts[3].x, origPts[2].y - origPts[3].y);
                         let maxW = Math.max(Math.round(w1), Math.round(w2));
@@ -1125,7 +1117,6 @@
                         if (!isFinite(maxW) || maxW < 10) maxW = 100;
                         if (!isFinite(maxH) || maxH < 10) maxH = 100;
 
-                        // 安全保護：極端大圖避免記憶體爆掉 (保留 16384 上限做安全網)
                         const SAFETY_LIMIT = 16384;
                         if (maxW > SAFETY_LIMIT || maxH > SAFETY_LIMIT) {
                             const scaleOut = Math.min(SAFETY_LIMIT / maxW, SAFETY_LIMIT / maxH);
@@ -1150,8 +1141,6 @@
                         let M = cv.getPerspectiveTransform(srcTri, dstTri);
                         let warped = new cv.Mat();
                         let dsize = new cv.Size(maxW, maxH);
-
-                        // ---- 使用 BORDER_REPLICATE 取代 BORDER_CONSTANT 消除黑邊 ----
                         cv.warpPerspective(imgMat, warped, M, dsize, cv.INTER_LANCZOS4, cv.BORDER_REPLICATE);
 
                         const applyFilter = document.getElementById('filter-check').checked;
@@ -1163,7 +1152,6 @@
                             finalMat = warped;
                         }
 
-                        // ---- 輸出 Canvas（高畫質設定） ----
                         const outCanvas = document.getElementById('output-canvas');
                         outCanvas.width = maxW;
                         outCanvas.height = maxH;
@@ -1173,24 +1161,24 @@
                         });
                         outCtx.imageSmoothingEnabled = true;
                         outCtx.imageSmoothingQuality = 'high';
-
                         cv.imshow(outCanvas, finalMat);
 
+                        // 釋放 Mat
                         srcTri.delete();
                         dstTri.delete();
                         M.delete();
+                        finalMat.delete();
 
-                        // ---- Android LINE 模式：顯示遮罩 ----
+                        // ----- Android LINE 模式：顯示遮罩 -----
                         if (useAndroidLineMode()) {
                             const dataUrl = outCanvas.toDataURL('image/png');
-                            finalMat.delete();
                             showImageOverlay(dataUrl);
                             saveBtn.disabled = false;
                             saveBtn.innerHTML = '✅ 儲存';
                             return;
                         }
 
-                        // ---- 正常儲存流程 ----
+                        // ----- 正常儲存流程 -----
                         const formatChoice = document.getElementById('export-format').value;
                         let mimeType, fileName, quality;
                         switch (formatChoice) {
@@ -1221,15 +1209,12 @@
                             if (!blob) {
                                 const dataUrl = outCanvas.toDataURL('image/png');
                                 showImageOverlay(dataUrl);
-                                finalMat.delete();
                                 saveBtn.disabled = false;
                                 saveBtn.innerHTML = '✅ 儲存';
                                 return;
                             }
 
                             const mobile = isMobileDevice();
-
-                            // 行動裝置優先使用 Web Share API
                             if (mobile && navigator.share && navigator.canShare) {
                                 const file = new File([blob], fileName, { type: mimeType });
                                 const shareData = { files: [file], title: '掃描結果' };
@@ -1238,7 +1223,6 @@
                                         .then(() => {
                                             saveBtn.disabled = false;
                                             saveBtn.innerHTML = '✅ 儲存';
-                                            finalMat.delete();
                                         })
                                         .catch((err) => {
                                             if (err.name !== 'AbortError') {
@@ -1247,13 +1231,12 @@
                                             }
                                             saveBtn.disabled = false;
                                             saveBtn.innerHTML = '✅ 儲存';
-                                            finalMat.delete();
                                         });
                                     return;
                                 }
                             }
 
-                            // 桌面 / 無法分享時使用下載
+                            // 桌面下載
                             try {
                                 const link = document.createElement('a');
                                 link.download = fileName;
@@ -1264,60 +1247,40 @@
                                 setTimeout(() => URL.revokeObjectURL(link.href), 8000);
                                 saveBtn.disabled = false;
                                 saveBtn.innerHTML = '✅ 儲存';
-                                finalMat.delete();
                                 return;
                             } catch (e) {
                                 console.warn('Download failed', e);
                             }
 
-                            // 最終 fallback：顯示遮罩
+                            // 最終 fallback
                             const dataUrl = outCanvas.toDataURL('image/png');
                             showImageOverlay(dataUrl);
                             saveBtn.disabled = false;
                             saveBtn.innerHTML = '✅ 儲存';
-                            finalMat.delete();
 
                         }, mimeType, quality);
 
                     } catch (err) {
                         console.error('Process error:', err);
-                        let msg = '處理失敗，請重試。\n';
-                        if (err.message) {
-                            msg += '錯誤訊息：' + err.message;
-                        }
-                        alert(msg);
+                        alert('處理失敗，請重試。錯誤：' + err.message);
                         saveBtn.disabled = false;
                         saveBtn.innerHTML = '✅ 儲存';
                     }
                 }, 80);
             }
+            window.processAndSave = processAndSave;
 
-            // ---- 初始化 ----
+            // ----- 初始化 -----
             resetToFull();
 
             document.addEventListener('DOMContentLoaded', function() {
-                browserInfo = detectBrowser();
-                if (browserInfo.isAndroidLine || forceAndroidLineMode) {
-                    lineWarning.style.display = 'block';
-                } else {
-                    lineWarning.style.display = 'none';
-                }
+                detectBrowser();
                 if (window.cvReady) {
                     document.getElementById('btn-auto').disabled = false;
                     document.getElementById('btn-reset').disabled = false;
                     document.getElementById('btn-save').disabled = false;
                 }
             });
-
-            // 暴露給全域
-            window.handleFileSelect = handleFileSelect;
-            window.autoDetect = autoDetect;
-            window.resetToFull = resetToFull;
-            window.redraw = redraw;
-            window.processAndSave = processAndSave;
-            window.shareOverlayImage = shareOverlayImage;
-            window.closeOverlay = closeOverlay;
-            window.toggleForceMode = toggleForceMode;
 
         })();
     </script>
